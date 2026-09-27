@@ -1,3 +1,22 @@
+## 2026-09-27 - Tips for the /computer command (senpi#2204)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/computer-tips.ts` (new) adds five tips gated by `requiresCommand: "computer"`: what computer use does, the stop chord and user-only `/computer resume` (the chord is chosen by `process.platform`), background input, `--permission computer:exec=deny` for look-only work, and the macOS Screen Recording and Accessibility grants.
+- `packages/coding-agent/src/modes/interactive/tips/registry.ts` appends `COMPUTER_TIPS` after `DAG_TIPS`.
+
+### Why
+
+- The `/computer` command comes from OmO's computer-use extension component; its users need the stop chord and permission facts where they already look, like the `/facts` and `/dag` tips.
+
+### Why an extension could not handle it
+
+- The tip catalog is host-owned and has no extension registration API; commands from extensions reach it only through `requiresCommand` gating, which keeps these tips invisible where `/computer` is not registered.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/tips/registry.ts`: the import list and the `TIP_DEFINITIONS` spread order.
+
 ## 2026-09-27 - /resume offers to move a moved repository's session here (senpi#2184)
 
 ### What changed
