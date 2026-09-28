@@ -6,6 +6,8 @@
 
 ### Added
 
+- `antigravity-subscription`, a builtin provider lane that drives the official `agy` CLI with its ambient login, keeps resident conversations across turns and process restarts, and routes model tool calls back through senpi's approval-aware tool pipeline.
+
 ### Changed
 
 ### Fixed

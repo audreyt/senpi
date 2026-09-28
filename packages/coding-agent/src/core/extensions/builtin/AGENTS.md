@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-40 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+41 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -43,9 +43,10 @@
 | 35 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
 | 36 | `claude-sdk-oauth` | `anthropic-subscription/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `anthropic-subscription/AGENTS.md` + `changes.md` |
 | 37 | `cursor-cli-oauth` | `cursor-cli-oauth/` | Cursor CLI OAuth provider lane: multi-account OAuth, spawn/stream parsing, failover; registers unconditionally and reports executable/auth state through its oauth check — see `cursor-cli-oauth/AGENTS.md` |
-| 38 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
-| 39 | `tool-search` | `tool-search/` | Shared tool catalog + `tool_search` exposure tool; loads before MCP, which feeds its tools into the same catalog |
-| 40 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
+| 38 | `antigravity-subscription` | `antigravity-subscription/` | Official agy CLI subscription lane: ambient login, resident conversation continuity, and senpi-hosted tools over a loopback MCP bridge — see `antigravity-subscription/AGENTS.md` |
+| 39 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
+| 40 | `tool-search` | `tool-search/` | Shared tool catalog + `tool_search` exposure tool; loads before MCP, which feeds its tools into the same catalog |
+| 41 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`). Shared non-factory modules: `rule-activation/` (appendRuleActivation + renderer, consumed by `rules/` and `ttsr/`) and `monitor-state-event.ts` (consumed by `goal/` and `terminal/`).
 
@@ -75,7 +76,7 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 ## NOTES
 
 - MCP search exposure tool is `tool_search`, owned by the registered `tool-search` builtin (`builtin/tool-search/tool.ts`). Do not reintroduce `mcp_search` references anywhere.
-- Sub-directory detail lives in per-extension `AGENTS.md` files (compaction, mcp, goal, loop, schedule, terminal, permission-system, prompt-preset, todotools, gpt-apply-patch, anthropic-subscription, cursor-cli-oauth).
+- Sub-directory detail lives in per-extension `AGENTS.md` files (compaction, mcp, goal, loop, schedule, terminal, permission-system, prompt-preset, todotools, gpt-apply-patch, anthropic-subscription, cursor-cli-oauth, antigravity-subscription).
 
 ---
 Generated: 2026-08-22 | Commit: `a5eed4453`

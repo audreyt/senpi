@@ -206,6 +206,26 @@ curl https://cursor.com/install -fsS | bash
 
 **Plan alternative.** `cursorCliOauthProvider.executionMode: "plan"` sends `--mode plan`: the CLI only plans and never executes tools, so no acknowledgement is required - a way to use the lane before deciding to trust force execution. `cursorCliOauthProvider.denyCommands` additionally refuses exact full commands inside the per-account HOME's `cli-config.json` (globs are not supported).
 
+### Antigravity (agy CLI)
+
+`antigravity-subscription` drives Google's official `agy` CLI in headless stream-JSON mode and uses agy's own ambient login. Senpi never imports or stores a Google token. Install and sign in to `agy` first, then run:
+
+```text
+/login antigravity-subscription
+```
+
+The login checks the local CLI and asks before adding `mcp(senpi-host/*)` to `~/.gemini/antigravity-cli/settings.json`. That permission lets agy call the loopback `senpi-host` MCP server. The model's agy workspace disables every agy builtin tool, so `read`, `bash`, extensions, approvals, hooks, and other tools still execute through senpi's normal tool pipeline. A builtin-tool step from agy is rejected and closes the conversation.
+
+Main-agent turns keep one resident agy process per senpi session. Normal turns send only the new delta; after a process or senpi restart, a persisted conversation id reattaches with `--conversation` when the transcript prefix still matches. Compaction or tree divergence starts a fresh conversation and bootstraps the visible history. Set `antigravitySubscriptionProvider.resumeMode` to `"off"` (or `SENPI_ANTIGRAVITY_SUBSCRIPTION_RESUME=off`) to prevent restart reattachment.
+
+Settings use the `antigravitySubscriptionProvider` key:
+
+- `enabled` - explicit ambient opt-in or kill switch.
+- `executablePath` - path to `agy` when it is not on `PATH`.
+- `resumeMode` - `"auto"` (default) or `"off"`.
+
+Environment overrides are `SENPI_ANTIGRAVITY_SUBSCRIPTION_ENABLED`, `SENPI_ANTIGRAVITY_SUBSCRIPTION_EXECUTABLE`, and `SENPI_ANTIGRAVITY_SUBSCRIPTION_RESUME`. No `SENPI_*` variable is passed to the agy child.
+
 ## Ollama Cloud
 
 Set `OLLAMA_API_KEY` or store an API key under the `ollama` auth key, then refresh the dynamic catalog:

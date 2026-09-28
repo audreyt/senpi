@@ -3,6 +3,7 @@ import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicSubscriptionExtension from "./anthropic-subscription/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
+import antigravitySubscriptionExtension from "./antigravity-subscription/index.ts";
 import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
@@ -116,6 +117,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
+	// Antigravity lane drives the official agy CLI with agy's own login; stays beside the other CLI provider lanes.
+	{ id: "antigravity-subscription", factory: antigravitySubscriptionExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.
