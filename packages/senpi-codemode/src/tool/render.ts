@@ -7,6 +7,7 @@ import {
 	type ToolDefinition,
 	type ToolRenderResultOptions,
 	truncateToVisualLines,
+	visibleWidth,
 } from "@code-yeongyu/senpi";
 import type { TruncationMeta } from "../output/output-meta.ts";
 import { highlightedCode } from "./code-preview.ts";
@@ -369,8 +370,9 @@ function headlined(
 	rest: string,
 	environment: RenderEnvironment,
 ): string {
-	const budget = environment.expanded ? undefined : environment.width - 3 - [...`${icon}  · ${rest}`].length;
-	return `${icon} ${sanitizeTerminalLabel(liveHeadline(summary, code, budget))} · ${rest}`;
+	const budget = environment.expanded ? undefined : environment.width - 3 - visibleWidth(`${icon}  · ${rest}`);
+	// Sanitize before measuring, so the cut is made on what the terminal actually shows.
+	return `${icon} ${liveHeadline(summary === undefined ? undefined : sanitizeTerminalLabel(summary), code, budget)} · ${rest}`;
 }
 
 function previewText(
@@ -913,6 +915,10 @@ function displaySummary(summary: string | undefined): string | undefined {
 	return normalizeEvalSummary(summary);
 }
 
+function cellIdSuffix(cellId: unknown): string {
+	return typeof cellId === "string" && cellId !== "" ? ` ${sanitizeTerminalLabel(cellId)}` : "";
+}
+
 export function renderEvalCall(
 	args: EvalToolRequest,
 	theme: Theme | undefined,
@@ -926,7 +932,8 @@ export function renderEvalCall(
 		return component;
 	}
 	if (!isEvalRunInput(args)) {
-		const title = args.action === "list" ? "eval list" : `eval ${args.action} ${args.cell_id}`;
+		// While a peek/stop call streams in, `cell_id` can still be missing; the title is the action alone until it arrives.
+		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(args.cell_id)}`;
 		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", title) }]);
 		return component;
 	}

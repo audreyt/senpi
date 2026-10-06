@@ -1,4 +1,5 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
+import { visibleWidth } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
 import type { EvalCellResult, EvalToolDetails, EvalToolInput } from "../src/tool/types.ts";
@@ -98,5 +99,30 @@ describe("live eval rows lead with the cell's summary (senpi#2802)", () => {
 		const lines = renderCall({ language: "js", code, summary });
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toMatch(/^╶─ . Listing the repo with a shell helper · eval js running/u);
+	});
+});
+
+describe("live eval rows stay one clean line (senpi#2831)", () => {
+	it("Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them", () => {
+		const lines = render(liveResult({ summary: "\u001b[31mred\u001b[0m step\rsecond\nthird", output: "" }));
+
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).not.toMatch(/[\u001b\r\n]/u);
+		expect(lines[0]).toMatch(/^╶─ . .*red.* step.*second.*third · eval js running/u);
+	});
+
+	it("Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells", () => {
+		const wide = "저장소의 모든 파일을 셸 도우미로 나열하고 결과를 요약합니다 😀😀";
+		const lines = render(liveResult({ summary: wide, output: "" }), false, 40);
+
+		expect(lines).toHaveLength(1);
+		expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(40);
+		expect(lines[0]).toMatch(/^╶─ . 저장소.*… · eval js running/u);
+	});
+
+	it("Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined", () => {
+		expect(renderCall({ action: "peek" } as never)).toEqual(["eval peek"]);
+		expect(renderCall({ action: "stop" } as never)).toEqual(["eval stop"]);
+		expect(renderCall({ action: "peek", cell_id: "toolu_A" } as never)).toEqual(["eval peek toolu_A"]);
 	});
 });

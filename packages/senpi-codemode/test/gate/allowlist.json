@@ -1105,6 +1105,63 @@
 				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
 			],
 			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
+		},
+		"senpi#2788": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-run-context.js",
+				"legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a fetch whose server never answers when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/rejection-reports.js",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell that leaves many promises rejecting unhandled when it runs then one report and a count reach its output and the kernel keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given an uncaught exception in a timer when it fires then the worker still restarts and says variables are lost",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that started a node:worker_threads Worker then the worker is terminated and earlier globals survive",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-ownership.js",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setImmediate when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a short fs/promises read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs callback read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs read stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on readline over a file stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a MessageChannel round trip when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a socket the cell constructed directly when stopped then it is destroyed, and sockets Node creates still pass instanceof",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a resource that will not close when its cell is stopped then the failure is reported and the stop still keeps the state",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given an http server the cell started when stopped then it served while live and is closed after, and Node's own constructors still work"
+			],
+			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after. The JavaScript worker reports unhandled rejections through rejection-reports.js instead of crashing (the lead-approved behavior for #2788). Round 3: the node:timers module timers, fs callback operations and streams, readline, and directly constructed net/tls/http/dgram sockets and servers are owned too (cell-ownership.js); a resource that will not close is reported instead of swallowed. The polling-loop contracts moved to js-kernel-stop-ends-loops.test.ts. Round 4: Node's socket and server types are owned on connect/listen/bind instead of by subclassing (http.Server calls net.Server as a function); a cell's http server serves while live and closes on Stop.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful",
+					"reason": "senpi#2788: a stop the worker acknowledges no longer costs the VM when the cell only awaits something that never settles; the worker releases the cell and keeps its globals. This contract leaves the baseline; its honest rename is 'Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state'."
+				},
+				{
+					"key": "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
+				}
+			]
+		},
+		"senpi#2831": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined"
+			],
+			"changes": [],
+			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
 		}
 	}
 }

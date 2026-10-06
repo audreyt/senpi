@@ -5915,8 +5915,13 @@ export class InteractiveMode {
 	 */
 	private showStatus(message: string): void {
 		const children = this.chatContainer.children;
-		const last = children.length > 0 ? children[children.length - 1] : undefined;
-		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		// While a turn streams, a notice goes above the live message, like a custom entry does. Appended
+		// after it, a notice taller than the screen pushed the live output above the viewport, and every
+		// streamed delta then replayed the whole scrollback: the view kept jumping to the top (#2836).
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const end = streamingIndex >= 0 ? streamingIndex : children.length;
+		const last = end > 0 ? children[end - 1] : undefined;
+		const secondLast = end > 1 ? children[end - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusMessage = message;
@@ -5928,8 +5933,12 @@ export class InteractiveMode {
 		const spacer = new Spacer(1);
 		this.lastStatusMessage = message;
 		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
-		this.chatContainer.addChild(spacer);
-		this.chatContainer.addChild(text);
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, spacer, text);
+		} else {
+			this.chatContainer.addChild(spacer);
+			this.chatContainer.addChild(text);
+		}
 		this.lastStatusSpacer = spacer;
 		this.lastStatusText = text;
 		this.ui.requestRender();

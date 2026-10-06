@@ -33,6 +33,7 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	#childrenStopping;
 	#shellWaits = new Set();
 	#onChildEvent;
 	#onShellWaitChange;
@@ -83,20 +84,28 @@ export class JsWorkerRuntime {
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
-			this.#pendingDisplays = [];
-			// A child still running here has lost its only owner: the cell that
-			// spawned it is over, nothing will await it again, and it would be
-			// reparented to init. Retire it the way timeout and abort cleanup
-			// already do, unless the cell asked for a detached process.
-			await this.#terminateChildren();
-			this.#hooks = null;
+			// A released run finishing late must not clear the state of the cell running now.
+			if (this.#hooks === hooks) await this.release();
 		}
+	}
+
+	/** Ends the current run's ownership now: its displays, its hooks, and (unless detached) its child processes. */
+	async release() {
+		const hooks = this.#hooks;
+		this.#pendingDisplays = [];
+		// A child still running here has lost its only owner: the cell that
+		// spawned it is over, nothing will await it again, and it would be
+		// reparented to init. Retire it the way timeout and abort cleanup
+		// already do, unless the cell asked for a detached process.
+		await Promise.all([this.#childrenStopping, this.#terminateChildren()]);
+		this.#childrenStopping = undefined;
+		if (this.#hooks === hooks) this.#hooks = null;
 	}
 
 	interrupt() {
 		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
 		// the caller's interrupt latency stays that of the acknowledgement.
-		void this.#terminateChildren();
+		this.#childrenStopping = this.#terminateChildren();
 	}
 
 	#trackChild(child, spawnOptions) {
