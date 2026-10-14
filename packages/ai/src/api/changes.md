@@ -1,4 +1,22 @@
 
+## 2026-10-14 - Claude Agent SDK 0.3.299 (senpi#2545)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` 2.1.292 -> 2.1.299, the Claude Code version the bundled SDK 0.3.299 declares.
+
+### Why
+
+The nightly Releasability gate (senpi#2545) fails its SDK currency check while a newer SDK is published; 0.3.299 bundles Claude Code 2.1.299.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
 ## 2026-10-12 - Recover from expired native web search payloads (senpi#3201)
 
 ### What changed

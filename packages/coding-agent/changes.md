@@ -133,6 +133,24 @@ The export surface lives in the package manifest; a separate extension cannot ad
 
 The `exports` map in `packages/coding-agent/package.json` at the next upstream manifest sync.
 
+## 2026-10-14 - Claude Agent SDK 0.3.299 (senpi#2545)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.292 -> 0.3.299; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+
+### Why
+
+The nightly Releasability gate (senpi#2545) fails its SDK currency check while a newer SDK is published; 0.3.299 bundles Claude Code 2.1.299.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
 ## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
 
 ### What changed

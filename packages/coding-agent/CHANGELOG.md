@@ -10,6 +10,7 @@
 
 ### Changed
 
+- The bundled Claude Agent SDK is updated to 0.3.299 (from 0.3.292), so the Anthropic subscription lane runs Claude Code 2.1.299 and the models it knows ([#2545](https://github.com/code-yeongyu/senpi/issues/2545)).
 - Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
 
 ### Fixed
