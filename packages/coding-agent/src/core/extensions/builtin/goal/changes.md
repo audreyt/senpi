@@ -1,3 +1,23 @@
+## 2026-10-14 - Provider-recovery continuations back off and wake when the pool frees up (senpi#3264)
+
+### What changed
+
+- New `provider-retry.ts`: `providerRetryDelayMs(attempt, retryAt, now)` (first retry immediate, then 15 s doubling to 30 min; a stated unblock time wins, capped at 6 h) and `providerRetryAt(messages, now)` (earliest future ISO instant in the failed turn's `errorMessage`, e.g. "blocked until ..."; assistant text is never scanned).
+- `monitor-continuation.ts`: `afterAgentSettled` counts consecutive provider-recovery attempts (reset by a turn that ends cleanly and by every continuation-state reset: session start, accepted user input, a goal change) and, when the delay is positive, arms a `providerRetry` timer instead of queueing at once; the timer fires through the normal `providerRecovery` admission (same cap, same single-flight and unattended guards).
+- `wait-progress.ts`: `GoalWaitKind` gains `providerRetry`, rendered "provider unavailable · goal retries in ...". RPC clients see it as the `kind` of `goal_continuation_timer_state`.
+
+### Why
+
+- With every pooled account blocked, provider recovery re-queued at once after each failed turn: 8 continuations in under 30 s hit the cap and blocked the goal, and nothing woke it when an account freed up (senpi#3264). Regression: `test/suite/regressions/3264-goal-provider-retry-backoff.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the goal extension's own continuation scheduler.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled`, `#schedule` delay selection and `#continueIfEligible` path mapping in `monitor-continuation.ts`; `formatGoalWaitLabel` in `wait-progress.ts`.
+
 # goal Extension Changes
 
 ## 2026-10-12 - Name on-duty todo waits (senpi#3163)

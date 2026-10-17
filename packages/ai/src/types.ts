@@ -81,6 +81,7 @@ export type KnownProvider =
 	| "typesafe"
 	| "nvidia"
 	| "deepseek"
+	| "elorian"
 	| "github-copilot"
 	| "xai"
 	| "groq"
@@ -1322,9 +1323,19 @@ export interface ModelCostTier extends ModelCostRates {
 	inputTokensAbove: number;
 }
 
-export interface ModelCost extends ModelCostRates {
+export interface ModelCostCard extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
+}
+
+export interface ModelCostEffectiveRate extends ModelCostCard {
+	/** ISO 8601 UTC instant from which this card replaces the base card and every earlier dated card. */
+	effectiveFrom: string;
+}
+
+export interface ModelCost extends ModelCostCard {
+	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
+	effectiveRates?: ModelCostEffectiveRate[];
 }
 
 export interface ModelImageResizeOptions {

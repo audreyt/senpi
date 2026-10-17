@@ -303,6 +303,8 @@ export interface CustomEntry<T = unknown> extends SessionEntryBase {
 	type: "custom";
 	customType: string;
 	data?: T;
+	/** Written at session start without user action; see `AppendEntryOptions.startupBookkeeping` (senpi#3263). */
+	startupBookkeeping?: true;
 }
 
 /** Label entry for user-defined bookmarks/markers on entries. */
@@ -1096,12 +1098,21 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
-const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+/** Setup entries: a file this process created that holds only these is disposable (senpi#3263). */
+const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"session",
 	"model_change",
 	"model_change_rejected",
 	"thinking_level_change",
+	"configuration_update",
+	"label",
 ]);
+
+/** A `custom` entry is disposable only when its writer marked it as startup bookkeeping (senpi#3263). */
+function isDisposableEntry(entry: FileEntry): boolean {
+	if (entry.type === "custom") return entry.startupBookkeeping === true;
+	return SETUP_ENTRY_TYPES.has(entry.type);
+}
 
 /** A user or assistant message: the first one makes a new session worth a file (#10000). */
 function isConversationEntry(entry: FileEntry): boolean {
@@ -1116,6 +1127,8 @@ export class SessionManager {
 	private persist: boolean;
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
+	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
+	private ownedHeaderFile: string | undefined;
 	// Set when an append to the flushed file failed and may have left a partial last line.
 	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
@@ -1287,6 +1300,7 @@ export class SessionManager {
 			this._buildIndex();
 			this.mutationCount++;
 			this.flushed = true;
+			this.ownedHeaderFile = undefined;
 		} else {
 			// Same here: the explicit path from --session stays the only granted one.
 			// The file does not exist yet, so this open CREATES the session: a caller-supplied
@@ -1306,6 +1320,7 @@ export class SessionManager {
 
 	newSession(options?: NewSessionOptions): string | undefined {
 		const timestamp = this._resetToNewSession(options);
+		this.ownedHeaderFile = undefined;
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
@@ -1497,14 +1512,21 @@ export class SessionManager {
 	}
 
 	/**
-	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
-	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
+	 * setup entries (header, model, thinking level, configuration, labels) and `custom` entries their
+	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity), then returns to
+	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
+	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
+	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
+	 * keeps the file, and a file opened from disk is never deleted here.
 	 */
 	async discardHeaderOnlyFile(): Promise<boolean> {
 		await this.headerWrite;
 		if (!this.persist || !this.sessionFile || !this.flushed) return false;
-		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		if (this.ownedHeaderFile !== this.sessionFile) return false;
+		if (!this.fileEntries.every(isDisposableEntry)) return false;
 		await rm(this.sessionFile, { force: true });
+		this.ownedHeaderFile = undefined;
 		this.flushed = false;
 		return true;
 	}
@@ -1539,6 +1561,7 @@ export class SessionManager {
 		// Synchronous with the last check above: no entry can land between it and the flag.
 		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
 			this.flushed = true;
+			this.ownedHeaderFile = sessionFile;
 		}
 	}
 
@@ -1932,11 +1955,12 @@ export class SessionManager {
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. */
-	appendCustomEntry(customType: string, data?: unknown): string {
+	appendCustomEntry(customType: string, data?: unknown, options?: { startupBookkeeping?: boolean }): string {
 		const entry: CustomEntry = {
 			type: "custom",
 			customType,
 			data,
+			...(options?.startupBookkeeping === true ? { startupBookkeeping: true as const } : {}),
 			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),

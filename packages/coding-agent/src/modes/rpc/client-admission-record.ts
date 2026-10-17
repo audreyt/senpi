@@ -5,6 +5,19 @@ import { effectOutcomeSchema } from "./effect-record.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 
 export const CLIENT_ADMISSION_ENTRY = "rpc_client_message_admission";
+/** Prefix of a `clientMessageId` the host minted for an id-less queued input; never shown to a client as its own. */
+export const HOST_MINTED_ID_PREFIX = "host:";
+
+export function isHostMintedId(id: string | undefined): boolean {
+	return id?.startsWith(HOST_MINTED_ID_PREFIX) === true;
+}
+
+/** The identity a client may see: a host-minted `clientMessageId` is internal and dropped. */
+export function clientFacingIdentity<T extends { readonly clientMessageId?: string }>(value: T): T {
+	if (!isHostMintedId(value.clientMessageId)) return value;
+	const { clientMessageId: _minted, ...rest } = value;
+	return rest as T;
+}
 export const DURABLE_CLIENT_MESSAGE_ID_CAPABILITY = "durable_client_message_id";
 export type RpcClientInput = Extract<RpcCommand, { type: "prompt" | "steer" | "follow_up" }>;
 
@@ -13,6 +26,8 @@ const admissionIdentitySchema = clientMessageIdentitySchema.extend({
 	durableSessionId: z.string(),
 	fingerprint: z.string(),
 	disposition: z.enum(["queued", "started", "handled"]),
+	/** The host minted `clientMessageId` for input sent without one (`host:<durableSessionId>:<uuid>`). */
+	hostMinted: z.literal(true).optional(),
 });
 
 const preparedInputSchema = clientMessageIdentitySchema.extend({

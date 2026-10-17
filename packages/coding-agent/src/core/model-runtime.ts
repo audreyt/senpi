@@ -97,6 +97,7 @@ import { createProviderSemaphores } from "./provider-concurrency.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -329,6 +330,16 @@ export class ModelRuntime implements Models {
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
+	}
+
+	/**
+	 * The AuthStorage this runtime's providers register into, when it was built on one. A session
+	 * built on a shared runtime must read this same store, or extension OAuth providers are never
+	 * listed (senpi#3434).
+	 */
+	get authStorage(): DefaultAuthStorage | undefined {
+		const store = this.credentials.backingStore;
+		return store instanceof DefaultAuthStorage ? store : undefined;
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
@@ -1068,8 +1079,12 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const capturing = {
+				...prepared,
+				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
+			};
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(prepared),
+				send(capturing),
 			);
 			return {
 				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),

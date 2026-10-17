@@ -69,7 +69,7 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 }
 
 function isAccountBlocked(account: AccountSlot, now: number): boolean {
-	return account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now);
+	return account.blockedUntil !== undefined && account.blockedUntil > now;
 }
 
 /** Whether the account can serve `model` now: no account-level block and no live block on that model. */
@@ -77,12 +77,16 @@ export function isBlockedFor(account: AccountSlot, now: number, model?: string):
 	return isAccountBlocked(account, now) || activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
 }
 
-/** Removes elapsed rate/capacity blocks but deliberately retains auth blocks until login refreshes the slot. */
+/**
+ * Removes elapsed blocks, auth blocks included: an auth block lasts until its
+ * re-probe time (senpi#3264), and one persisted before re-probe times existed
+ * has no expiry and clears at once, so the next request probes the account.
+ */
 export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.now()): AccountSlot[] {
 	return accounts.map((account) => {
 		let available = account;
-		if (account.blockReason !== "auth_error" && account.blockedUntil !== undefined && account.blockedUntil <= now) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
+			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;

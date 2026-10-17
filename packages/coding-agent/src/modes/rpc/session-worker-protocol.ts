@@ -62,6 +62,7 @@ export type SessionWorkerToHost =
 			snapshot?: WorkerSnapshot;
 	  }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
+	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
 	| { type: "request_close" }
 	| { type: "failure"; error: string };
 

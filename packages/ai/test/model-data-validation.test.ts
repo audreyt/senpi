@@ -155,6 +155,58 @@ describe("generated model data validation", () => {
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
 	});
 
+	it("accepts a dated cost card", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = {
+			input: 1,
+			output: 2,
+			cacheRead: 0,
+			cacheWrite: 0,
+			effectiveRates: [{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+		};
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).not.toThrow();
+	});
+
+	it.each([
+		["an empty card list", [], "invalid cost.effectiveRates"],
+		[
+			"a local-time start",
+			[{ effectiveFrom: "2026-12-01T00:00:00", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a date-only start",
+			[{ effectiveFrom: "2026-12-01", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a missing rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0 }],
+			"invalid cacheWrite",
+		],
+		[
+			"a negative rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: -2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid input",
+		],
+		[
+			"two cards starting together",
+			[
+				{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 },
+				{ effectiveFrom: "2026-12-01T08:00:00.000Z", input: 3, output: 6, cacheRead: 0, cacheWrite: 0 },
+			],
+			"repeats effectiveFrom",
+		],
+	] as const)("rejects a malformed dated cost card: %s", (_case, effectiveRates, expectedMessage) => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, effectiveRates };
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
+	});
+
 	it("rejects a model without a known type", () => {
 		const fixture = createFixture();
 		const model = fixture.values["chat:model-a"] as Record<string, unknown>;

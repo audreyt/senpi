@@ -1,6 +1,13 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
+import {
+	buildDeadlineStopNotice,
+	type DeadlineStopData,
+	deadlineStopPendingSinceLastTurn,
+	TURN_DEADLINE_ENTRY_TYPE,
+} from "../../../turn-deadline.ts";
+import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
@@ -75,6 +82,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry, {
 		replaces: isSameGoalCacheWarmCard,
 	});
+	pi.registerEntryRenderer(
+		TURN_DEADLINE_ENTRY_TYPE,
+		noticeEntryRenderer((entry) => {
+			const data = (entry as { data?: DeadlineStopData }).data;
+			if (data === undefined) return undefined;
+			return { title: "turn stopped on a deadline", why: buildDeadlineStopNotice(data) };
+		}),
+	);
 	registerGoalTools(pi, {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
@@ -273,14 +288,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
-		todoOwedBackstop.afterAgentEnd({
-			ctx,
-			event,
-			goal,
-			continuationPending,
-			hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
-			wakeSourceNames: monitorContinuation.liveWakeSources(),
-		});
+		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) === undefined) {
+			todoOwedBackstop.afterAgentEnd({
+				ctx,
+				event,
+				goal,
+				continuationPending,
+				hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+				wakeSourceNames: monitorContinuation.liveWakeSources(),
+			});
+		}
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {

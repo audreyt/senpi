@@ -50,6 +50,17 @@ class WorkerEventWriter extends SessionEventWriter {
 	constructor() {
 		super(() => {});
 	}
+	override publishLoadedSurfacesChanged(_sessionId: string, previous: string | undefined, digest: string): void {
+		// The isolate never emits the event itself: the host owns the per-(connection, session)
+		// dedupe across every attachment, so a connection attached to several worker sessions
+		// hears one notice per inventory change on either runtime (#3198 review, L5).
+		exchange((signal) => ({
+			type: "loaded_surfaces",
+			...(previous === undefined ? {} : { previous }),
+			digest,
+			signal,
+		}));
+	}
 	override enqueue(_sessionId: string, record: object): boolean {
 		if (Buffer.byteLength(JSON.stringify(record)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_output_limit");

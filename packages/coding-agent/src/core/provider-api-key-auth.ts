@@ -17,11 +17,17 @@ import {
 	resolveHeadersOrThrow,
 } from "./resolve-config-value.ts";
 
+interface AmbientAuthExtensionInput {
+	name?: string;
+	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+}
+
 interface ProviderAuthExtensionInput {
 	apiKey?: string;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
 	oauth?: unknown;
+	ambientAuth?: AmbientAuthExtensionInput;
 }
 
 export function composeApiKeyAuth(
@@ -36,6 +42,14 @@ export function composeApiKeyAuth(
 	const rawHeaders = configuredHeaders(config, extension);
 	const headerSource = headerAuthResolutionSource(config?.headers, extension?.headers);
 	const authHeader = extension?.authHeader ?? config?.authHeader ?? false;
+	const ambient = extension?.ambientAuth;
+	if (!inherited && rawKey === undefined && !headerSource && ambient) {
+		// A shared cloud credential chain (Google ADC, AWS env) owns the lane: an
+		// explicitly configured key, credential headers, or a base provider still
+		// win, and a resolution marked ambient never outranks a configured
+		// provider in automatic default selection (senpi#2327).
+		return ambientApiKeyAuth(providerId, ambient, rawHeaders, headerSource, authHeader);
+	}
 	if (!inherited && rawKey === undefined && !headerSource && oauth) {
 		// An OAuth provider with no key, no credential headers and no base normally
 		// gets no api-key auth at all. Providers with ambient credentials still
@@ -133,6 +147,38 @@ function ambientOnlyAuth(
 			const resolved = await resolve(input);
 			return resolved ? { type: "oauth", source: resolved.source } : undefined;
 		},
+		resolve,
+	};
+}
+
+/**
+ * Api-key adapter for extension providers whose credentials live in a shared
+ * cloud credential chain (Google ADC, AWS env). No login is offered — the chain
+ * is the only source — and `Models.checkAuth` resolves this auth, so the
+ * `ambient` marker reaches the provider's auth status.
+ */
+function ambientApiKeyAuth(
+	providerId: string,
+	ambient: AmbientAuthExtensionInput,
+	rawHeaders: Record<string, string> | undefined,
+	headerSource: string | undefined,
+	authHeader: boolean,
+): ApiKeyAuth {
+	const resolve = async (input: Parameters<ApiKeyAuth["resolve"]>[0]): Promise<AuthResult | undefined> => {
+		const result = await ambient.resolve({ ctx: input.ctx, signal: input.signal });
+		if (!result) return undefined;
+		const explicitEnv = { ...(input.credential?.env ?? {}), ...(result.env ?? {}) };
+		const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
+		const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
+		return {
+			...result,
+			auth: withConfiguredAuth(result.auth, headers, authHeader),
+			source: result.source ?? headerSource,
+		};
+	};
+	return {
+		name: ambient.name ?? "Ambient credentials",
+		ambientOnly: true,
 		resolve,
 	};
 }

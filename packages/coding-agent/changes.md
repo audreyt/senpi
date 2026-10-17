@@ -1,3 +1,21 @@
+## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
+
+### What changed
+
+Regression tests only. `test/model-registry.test.ts` removes a custom provider id with a stored key and expects it gone from `getAll()` and `getAvailable()` after `refresh()`. `test/suite/rpc-auth-and-connection-handler.test.ts` runs the desktop's removal sequence over RPC (delete the models.json block, then `logout`) for a key-bearing and a keyless custom provider and expects `get_available_models` to drop it without a restart. `test/suite/rpc-connection-harness.ts` takes an optional `modelsJsonPath`, because the default passes the temp directory as the models path.
+
+### Why
+
+Desktop sisyphuslabs/omo-desktop-app#1812 kept its Remove action off because a removed server's models stayed listed. Current `logout` + unscoped `refresh()` rebuilds providers from `models.json`, and socket hosts share one `ModelRuntime`; nothing pinned that.
+
+### Why an extension could not handle it
+
+Tests of core RPC and model-runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `describe` blocks these tests join, when upstream adds neighbors there.
+
 ## 2026-10-13 - Claude Agent SDK 0.3.296 (senpi#3258)
 
 ### What changed

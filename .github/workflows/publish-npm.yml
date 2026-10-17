@@ -18,6 +18,11 @@ name: Release
         required: false
         type: boolean
         default: false
+      force_tests:
+        description: 'Run the CI=1 test suite inside this release job instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged; needs a full local suite receipt at the release sha).'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -42,7 +47,9 @@ jobs:
     # first and CI tests it there. The job waits up to 40 min for that CI result (CI walls
     # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
     # A release whose HEAD already has green CI finishes in a few minutes.
-    timeout-minutes: 60
+    # force_tests runs the whole suite serially in this job instead (~55 min, estimated from the summed CI test jobs, bounded at 110 min by
+    # scripts/release-test-gate.mjs), so that mode gets 180 min.
+    timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -128,6 +135,9 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
+          if [ "${{ inputs.force_tests }}" = "true" ]; then
+            ARGS+=(--force-tests)
+          fi
           npm run release -- "${ARGS[@]}"
 
       - name: Publish prepared version
@@ -164,6 +174,7 @@ jobs:
             echo "| Job status | ${{ job.status }} |"
             echo "| Mode | ${{ inputs.publish-only && 'publish-only' || 'release' }} |"
             echo "| Dry run | ${{ inputs.dry_run }} |"
+            echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
             echo "| Commit | ${{ github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"

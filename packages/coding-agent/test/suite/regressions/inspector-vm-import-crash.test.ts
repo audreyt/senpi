@@ -224,6 +224,39 @@ describe("Inspector VM dynamic import crash handling", () => {
 		expect(result.stderr).toContain("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING");
 	});
 
+	for (const runtime of ["node", "bun"] as const) {
+		const command = runtime === "node" ? [process.execPath, "--import", "tsx"] : ["bun"];
+		const runFixture = (mode: "recoverable" | "fatal") =>
+			spawnSync(
+				command[0] as string,
+				[
+					...command.slice(1),
+					fileURLToPath(new URL("../../fixtures/inspector-early-recovery.ts", import.meta.url)),
+					mode,
+					"with-containment",
+				],
+				{ encoding: "utf8", env: { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" }, timeout: 30_000 },
+			);
+
+		// Recovery is a Node Inspector feature: Bun never routes the rejection to `uncaughtException`, and even
+		// with the early seam alone it exits 1 there (checked at the base commit). Only the fatal half applies.
+		if (runtime === "node") {
+			test(`${runtime}: with the cli-main stale-ctx seam installed too, the Inspector rejection is still recovered`, () => {
+				const result = runFixture("recoverable");
+
+				expect(result.status, result.stderr).toBe(0);
+				expect(result.stdout).toContain("recovered:1");
+			});
+		}
+
+		test(`${runtime}: with the cli-main stale-ctx seam installed too, a non-matching bootstrap crash stays fatal`, () => {
+			const result = runFixture("fatal");
+
+			expect(result.status).toBe(1);
+			expect(result.stdout).not.toContain("recovered:");
+		});
+	}
+
 	test("classifies hostile rejection values without throwing", () => {
 		const openedInspector = inspectorUrl() === undefined;
 		if (openedInspector) openInspector(0, "127.0.0.1", false);

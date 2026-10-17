@@ -49,6 +49,18 @@ export const USAGE_LIMIT_EXHAUSTION = {
 } as const;
 
 /**
+ * Anthropic's rejection of a Claude subscription token used outside Claude Code (senpi#3259): a
+ * 400 invalid_request_error reading "Third-party apps now draw from your extra usage, not your plan
+ * limits. Add more at claude.ai/settings/usage and keep going." The request was billed to extra
+ * usage instead of the plan, so every model on the same credential is refused the same way.
+ */
+export const ANTHROPIC_THIRD_PARTY_BILLING_MARKER = "Third-party apps now draw from your extra usage";
+
+export function isAnthropicThirdPartyBillingMessage(errorMessage: string | undefined): boolean {
+	return errorMessage?.toLowerCase().includes(ANTHROPIC_THIRD_PARTY_BILLING_MARKER.toLowerCase()) === true;
+}
+
+/**
  * Account quota, budget, credit, and billing exhaustion: the account cannot
  * serve more requests until the user pays or the quota resets. Shared by the
  * terminal classifier below and the fallback circuit breaker, so both recognise
@@ -84,6 +96,9 @@ const QUOTA_EXHAUSTION_PATTERNS = [
 	// stays dead until its quota resets — every same-account retry is guaranteed
 	// to fail, so the failure is terminal, not rate-limited.
 	...USAGE_LIMIT_EXHAUSTION.markers,
+
+	// Anthropic billing a subscription token as a third-party app (senpi#3259).
+	escapeRegExp(ANTHROPIC_THIRD_PARTY_BILLING_MARKER),
 ] as const;
 
 const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);

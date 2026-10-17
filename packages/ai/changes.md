@@ -1,3 +1,94 @@
+## 2026-10-17 - Preserve Elorian's manually owned catalog shard
+
+### What changed
+
+- `packages/ai/scripts/model-shards.ts`: declares `elorian.models.ts` as fork-owned.
+
+### Why
+
+- `packages/ai/scripts/model-shards.ts`: catalog regeneration must retain the provider's manually maintained model metadata.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/model-shards.ts`: shard pruning runs during generation before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/model-shards.ts`: `FORK_OWNED_MODEL_SHARDS`.
+
+## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the per-model post-pass calls `applyDatedListPrice` (new fork file `scripts/dated-list-prices.ts`), which pins the Argon rows on `google` and `google-vertex` to the introductory card plus a `2026-12-01T08:00:00Z` list-price card. `google.json` and `google-vertex.json` were regenerated with `--strict --providers google,google-vertex`: no row added or removed, and only the two Argon rows' `cost` changed.
+- `packages/ai/scripts/model-data.ts`: `cost.effectiveRates` is validated: a non-empty array, ISO UTC `effectiveFrom` (seconds or milliseconds, `Z` only), no two cards starting at the same instant, and four finite non-negative rates per card.
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- The cost card is baked into the generated catalog and its validator is the generator's schema authority; an extension cannot change either.
+
+### Expected merge conflict zones
+
+- LOW: the post-pass loop in `generate-models.ts` (one line) and the cost block of `validateModelEntry` in `model-data.ts`.
+
+## 2026-10-14 - Direct google-auth-library dependency
+
+### What changed
+
+- `packages/ai/package.json`: adds `google-auth-library` 10.6.2 as a direct dependency (already installed at that version through `@google/genai`; lockfiles gain only the workspace edge).
+
+### Why
+
+- `packages/ai/package.json`: the direct dependency supports `src/api/google-vertex-adc.ts`, which imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
+
+### Why an extension could not handle it
+
+- `packages/ai/package.json`: package dependencies must be declared by the package that imports them, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/package.json`, one line in the `dependencies` block.
+
+## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the `opencode-go` variant's base path is `https://opencode.ai/inference/go` instead of `https://opencode.ai/zen/go`. `src/providers/data/opencode-go.json` was regenerated with `--providers opencode-go`: all 31 rows kept, and only `baseUrl` changed (`/zen/go` -> `/inference/go`, `/zen/go/v1` -> `/inference/go/v1`).
+
+### Why
+
+- The legacy base still proxies the OpenAI and Anthropic wires but has no route for the native generate-content wire: `POST /zen/go/v1/models/<id>:streamGenerateContent` returns a 404 HTML page, while the same path on `/inference/go/v1` reaches the API. The Argon Contributor row is served only over that wire, so every request to it failed (senpi#3377; measured 2026-10-15).
+
+### Why an extension could not handle it
+
+- The base URL is baked into the generated catalog every builtin provider request reads; an extension cannot move a builtin row's endpoint.
+
+### Expected merge conflict zones
+
+- LOW: the `opencodeVariants` entry in `generate-models.ts`; `opencode-go.json` and `.manifest.json` are generated.
+
+## 2026-10-14 - Venice deepseek models take thinking through reasoning_effort (senpi#3308)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the deepseek-v4 compat post-pass treats `venice` like `openrouter` and `opencode`. It keeps only `requiresReasoningContentOnAssistantMessages` and leaves Venice's auto-detected `reasoning_effort` format in place, instead of stamping DeepSeek's native `thinkingFormat: "deepseek"`. `src/providers/data/venice.json` was regenerated with `--providers venice` (no model added or removed). The six Venice deepseek-v4 entries lost `thinkingFormat: "deepseek"`, and their `thinkingLevelMap` now follows Venice's published efforts (`off: "none"`, then `low`/`medium`/`high`/`max` as models.dev lists them per model).
+
+### Why
+
+- Venice's chat schema is `additionalProperties: false` and has no `thinking` field. The deepseek format always sent `thinking: { type: "enabled" | "disabled" }`, so every request to a Venice deepseek model failed with `400 Invalid request parameters` ("Unrecognized key(s) in object: 'thinking'"), whatever the thinking level (senpi#3308, captured on the wire by the reporter).
+
+### Why an extension could not handle it
+
+- The compat flags are baked into the generated catalog that every provider request reads; an extension cannot change a builtin model's request shape before the provider builds the payload.
+
+### Expected merge conflict zones
+
+- LOW: the `preservesNativeReasoningEffort` line in the deepseek-v4 post-pass of `generate-models.ts`; `venice.json` and `.manifest.json` are generated.
+
 ## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
 
 ### What changed

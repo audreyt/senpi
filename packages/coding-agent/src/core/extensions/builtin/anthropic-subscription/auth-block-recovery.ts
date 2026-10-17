@@ -15,8 +15,9 @@ export type AuthBlockRecoveryInput = {
 	/** True when the token endpoint rejected the grant itself, not when it was throttled or unavailable. */
 	readonly isGrantRejected: (error: unknown) => boolean;
 	readonly reload: () => Promise<AccountSlot[]>;
-	/** Whether an account can serve this request now; recovery runs only when none can. */
+	/** Whether an account can serve this request now; when none can, every recoverable account is recovered. */
 	readonly isUsable: (account: AccountSlot) => boolean;
+	readonly now: number;
 	/**
 	 * The request error for a refresh that failed for a reason other than a rejected grant (throttled,
 	 * unavailable, a busy store): the slot stays blocked and the next request tries it again.
@@ -70,9 +71,22 @@ async function recoverSlot(input: AuthBlockRecoveryInput, name: string): Promise
 	});
 }
 
+/** The re-probe time passed (or the block predates re-probe times): the next request probes this account. */
+function isProbeDue(slot: AccountSlot, now: number): boolean {
+	return slot.blockedUntil === undefined || slot.blockedUntil <= now;
+}
+
+/**
+ * Recovers before anything probes a rejected token: an account whose auth block
+ * is due for its re-probe (senpi#3264) is refreshed first, so the probe sends
+ * fresh material; when no account can serve, every recoverable account is.
+ */
 export async function recoverAuthBlockedSlots(input: AuthBlockRecoveryInput): Promise<AccountSlot[]> {
-	const candidates = input.accounts.filter(isAuthBlockRecoverable);
-	if (candidates.length === 0 || input.accounts.some(input.isUsable)) return [...input.accounts];
+	const recoverable = input.accounts.filter(isAuthBlockRecoverable);
+	const candidates = input.accounts.some(input.isUsable)
+		? recoverable.filter((slot) => isProbeDue(slot, input.now))
+		: recoverable;
+	if (candidates.length === 0) return [...input.accounts];
 	let transientFailure: unknown;
 	for (const candidate of candidates) {
 		try {

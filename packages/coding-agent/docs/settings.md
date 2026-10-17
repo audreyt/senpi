@@ -103,7 +103,7 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
 | `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5-5/`max`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -198,6 +198,19 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
   }
 }
 ```
+
+### Context Files and Skills
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `contextFiles.maxBytesPerFile` | number | `65536` | Maximum UTF-8 bytes loaded from each AGENTS.md / CLAUDE.md, including the truncation note and any closing code fence |
+| `contextFiles.maxTotalBytes` | number | `131072` | Maximum combined UTF-8 bytes of loaded context files, including truncation notes and closing code fences |
+
+Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
+
+The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 64 KiB of descriptions, descriptions become one line of at most 160 characters. If needed to meet the section cap, smaller catalogs also use compact descriptions, then all descriptions are dropped. If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
+
+Context cuts, skipped files, and compacted or omitted skills share the "Context size limits" resource notice in interactive mode and appear once on stderr at startup in print, JSON, and RPC modes, with the affected path when present. Ordinary skill validation warnings keep their existing diagnostic behavior and are not printed to stderr by this size check.
 
 ### Compaction
 
@@ -323,7 +336,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 A chain is only for the exact primary model it names: selector lookup first considers an exact thinking-level selector, then the same `provider/model` without its thinking suffix. Wildcard selectors, role keys such as `default`, and other catch-all chains are not supported.
 
-A fallback entry with `:thinking-level` requests that level on the target model; a bare entry inherits the current thinking level. Either value is clamped to the target model's supported levels. When an unpinned fallback later returns to the primary, it restores the original thinking level unless you changed it while using the fallback.
+A fallback entry with `:thinking-level` requests that level on the target model; a bare entry inherits the current thinking level. Either value is clamped to the target model's supported levels. An entry may name the same model as its key at another thinking level: it is a rung of its own, so the chain retries that model at the other level before it moves to the next model. An entry without a suffix names the rung already in flight, so the chain skips it. A hard failure parks only the rung that failed, so the chain still tries that model at its other levels; a failure that applies to the whole model (an auth error, a model that does not exist) therefore costs one request per listed level before the chain moves on. A transient, rate-limit or billing failure parks every level of the model at once. When an unpinned fallback later returns to the primary, it restores the original thinking level unless you changed it while using the fallback.
 
 `/fallback` writes these settings to the global settings file. Project settings are still merged when read; because `fallbackChains` is a nested map, a project `retry.fallbackChains` replaces the global map rather than merging individual chain keys.
 
@@ -545,6 +558,8 @@ This is the default and has no setting. Tools may declare `exposure: "eval"` to 
 |---------|------|---------|-------------|
 | `engineTurns.maxPerUserInput` | number | `150` | Turns the agent may start on its own (stream-rule nudges, goal continuations, other extension follow-ups) after one user message before it pauses; `0` turns the limit off |
 | `engineTurns.maxToolFreePerMinute` | number | `12` | Turns started on its own within 60 s that called no tool before it pauses; `0` turns the limit off |
+| `turn_inactivity_ms` | number | `3600000` | Milliseconds a turn may run with no tool progress before it is stopped as a deadline; renewed only by tool execution events and admitted user input, never by streamed text. Minimum `60000`; `0` disables |
+| `turn_max_runtime_ms` | number | `21600000` | Hard cap on one turn's runtime from prompt accept; `0` disables |
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
 

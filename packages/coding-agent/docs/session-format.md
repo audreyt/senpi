@@ -297,6 +297,8 @@ Extension state persistence. Does NOT participate in LLM context.
 {"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
 ```
 
+Optional field: `startupBookkeeping: true` marks an entry its extension wrote at session start without any user action (`pi.appendEntry(customType, data, { startupBookkeeping: true })`). A session file this process created that holds only setup entries and such marked entries is removed when the session closes without a conversation; an unmarked custom entry keeps the file.
+
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 [Virtual model](virtual-models.md) router state is stored as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
@@ -462,7 +464,7 @@ Key methods for working with sessions programmatically.
 - `appendModelChange(provider, modelId)` - Record model change
 - `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction; pass `null` as `firstKeptEntryId` to retain no earlier entries
 - `appendContextEdit(targetId, replacement)` - Omit (`null`) or replace one entry's message in future model context without changing raw history
-- `appendCustomEntry(customType, data?)` - Extension state (not in context)
+- `appendCustomEntry(customType, data?, options?)` - Extension state (not in context); `options.startupBookkeeping` marks startup bookkeeping
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
 - `appendLabelChange(targetId, label)` - Set/clear label

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,102 @@ describe("RPC auth and connection handler contracts", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	// Desktop #1812: the desktop removes a custom server by deleting its models.json block, then
+	// sends logout for that provider. The running host must stop listing its models right away.
+	it("stops serving a removed custom provider after logout, without a restart", async () => {
+		const collected = makeSink();
+		const modelsPath = join(tempDir, "models.json");
+		const harness = makeHarness(tempDir, { modelsJsonPath: modelsPath });
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const gpuBox = {
+			baseUrl: "http://192.168.1.20:8000/v1",
+			api: "openai-completions",
+			models: [
+				{
+					id: "qwen2.5-coder",
+					name: "qwen2.5-coder",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		};
+		let request = 0;
+		const send = async (command: Record<string, unknown>) => {
+			const id = `r${++request}`;
+			await handler.handleInputLine(JSON.stringify({ id, ...command }));
+			return collected.waitFor((message) => message.id === id, 5_000);
+		};
+		const servesGpuBox = async () => {
+			const response = await send({ type: "get_available_models" });
+			const data = response.data as { models: Array<{ provider: string }> };
+			return data.models.some((model) => model.provider === "gpu-box");
+		};
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: { "gpu-box": gpuBox } }));
+		expect(await send({ type: "login_api_key", provider: "gpu-box", key: "synthetic-server-key" })).toMatchObject({
+			success: true,
+		});
+		expect(await servesGpuBox()).toBe(true);
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
+		expect(await send({ type: "logout", provider: "gpu-box" })).toMatchObject({ success: true });
+		expect(await servesGpuBox()).toBe(false);
+		// Losing the key alone hides it from "available"; the models themselves must be gone too,
+		// which is what #1812 saw stay listed.
+		expect(harness.runtimeHost.session.modelRegistry.getAll().some((model) => model.provider === "gpu-box")).toBe(
+			false,
+		);
+		await handler.dispose();
+	});
+
+	it("stops serving a removed keyless custom provider after logout (#1812)", async () => {
+		const collected = makeSink();
+		const modelsPath = join(tempDir, "models.json");
+		const harness = makeHarness(tempDir, { modelsJsonPath: modelsPath });
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const localBox = {
+			baseUrl: "http://localhost:8080/v1",
+			api: "openai-completions",
+			apiKey: "not-needed",
+			models: [
+				{
+					id: "gemma-3",
+					name: "gemma-3",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		};
+		let request = 0;
+		const send = async (command: Record<string, unknown>) => {
+			const id = `k${++request}`;
+			await handler.handleInputLine(JSON.stringify({ id, ...command }));
+			return collected.waitFor((message) => message.id === id, 5_000);
+		};
+		const servesLocalBox = async () => {
+			const response = await send({ type: "get_available_models" });
+			const data = response.data as { models: Array<{ provider: string }> };
+			return data.models.some((model) => model.provider === "local-box");
+		};
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: { "local-box": localBox } }));
+		await harness.runtimeHost.session.modelRegistry.refresh();
+		expect(await servesLocalBox()).toBe(true);
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
+		expect(await send({ type: "logout", provider: "local-box" })).toMatchObject({ success: true });
+		expect(await servesLocalBox()).toBe(false);
+		await handler.dispose();
+	});
+
 	it("lists authentication providers with their status", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
@@ -31,7 +127,10 @@ describe("RPC auth and connection handler contracts", () => {
 		expect(response).toMatchObject({ type: "response", command: "get_auth_providers", success: true });
 		const data = response.data as { providers: Array<Record<string, unknown>> };
 		const anthropic = data.providers.find((provider) => provider.id === "anthropic");
-		expect(anthropic).toMatchObject({ authType: "oauth", name: expect.any(String) });
+		expect(anthropic).toMatchObject({ authType: "api_key", name: expect.any(String) });
+		expect(data.providers.some((provider) => provider.id === "anthropic" && provider.authType === "oauth")).toBe(
+			false,
+		);
 		expect(anthropic?.status).toMatchObject({ configured: expect.any(Boolean) });
 		await handler.dispose();
 	});
@@ -55,32 +154,32 @@ describe("RPC auth and connection handler contracts", () => {
 			);
 		};
 
-		harness.authStorage.set("anthropic", {
+		harness.authStorage.set("openrouter", {
 			type: "oauth",
 			access: "scripted-access",
 			refresh: "scripted-refresh",
 			expires: 4_102_444_800_000,
 		});
 		await modelRegistry.refresh();
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: true, source: "stored" },
 			api_key: { configured: false },
 		});
 
-		harness.authStorage.remove("anthropic");
+		harness.authStorage.remove("openrouter");
 		await handler.handleInputLine(
-			JSON.stringify({ id: "key", type: "login_api_key", provider: "anthropic", key: "sk-scripted" }),
+			JSON.stringify({ id: "key", type: "login_api_key", provider: "openrouter", key: "sk-scripted" }),
 		);
 		await collected.waitFor((message) => message.id === "key");
 		// No refresh here: the login_api_key response itself must mean the status is current.
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: false },
 			api_key: { configured: true, source: "stored" },
 		});
 
-		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "anthropic" }));
+		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "openrouter" }));
 		await collected.waitFor((message) => message.id === "out");
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: false },
 			api_key: { configured: false },
 		});

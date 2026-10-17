@@ -74,7 +74,14 @@ async function runAgentTurn(notifications: string[], mode: ExtensionContextLike[
 
 	await harness.emit("agent_start", { type: "agent_start" }, ctx);
 	await harness.emit("message_start", { type: "message_start", message }, ctx);
+	const delta = {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial: message },
+	};
+	await harness.emit("message_update", delta, ctx);
 	vi.advanceTimersByTime(1_000);
+	await harness.emit("message_update", delta, ctx);
 	await harness.emit("message_end", { type: "message_end", message }, ctx);
 	await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
 }

@@ -81,9 +81,31 @@ describe("release_session and gateway deliveries (real host)", () => {
 			success: true,
 			data: { released: true, dropped: { deliveries: [], user_messages: ["USER STEER TEXT", "USER FOLLOW TEXT"] } },
 		});
-		const file = readFileSync(sessionPath, "utf8");
-		expect(file).not.toContain("USER STEER TEXT");
-		expect(file).not.toContain("USER FOLLOW TEXT");
+		// The texts were handed back, so none is stored as a message, and the durable admission records
+		// that kept them while queued are closed (newest state not "queued"), so a reopen restores neither.
+		const entries = readFileSync(sessionPath, "utf8")
+			.split("\n")
+			.filter((line) => line !== "")
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						type: string;
+						customType?: string;
+						data?: Record<string, unknown>;
+						message?: unknown;
+					},
+			);
+		const messages = entries
+			.filter((entry) => entry.type === "message")
+			.map((entry) => JSON.stringify(entry.message));
+		expect(
+			messages.filter((message) => message.includes("USER STEER TEXT") || message.includes("USER FOLLOW TEXT")),
+		).toEqual([]);
+		const newest = new Map<string, unknown>();
+		for (const entry of entries)
+			if (entry.customType === "rpc_client_message_admission")
+				newest.set(String(entry.data?.clientMessageId), entry.data?.state);
+		expect([...newest.values()].filter((state) => state === "queued")).toEqual([]);
 		expect(afterReleased(sessionPath)).toEqual([]);
 	});
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { applyDatedListPrice } from "./dated-list-prices.ts";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
@@ -2708,7 +2709,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// - null/undefined/@ai-sdk/openai-compatible → openai-completions
 		const opencodeVariants = [
 			{ key: "opencode", provider: "opencode", basePath: "https://opencode.ai/zen" },
-			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/zen/go" },
+			// Go's documented base (https://opencode.ai/docs/go/). The legacy /zen/go keeps the OpenAI and
+			// Anthropic wires but has no native generate-content route (404), senpi#3377.
+			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/inference/go" },
 		] as const;
 
 		for (const variant of opencodeVariants) {
@@ -4002,7 +4005,11 @@ async function generateModels() {
 			candidate.id.includes("deepseek-v4") &&
 			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
 		) {
-			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
+			// Venice's request schema is additionalProperties:false and has no `thinking` field, so
+			// DeepSeek's native `thinking: { type }` object 400s every request there (senpi#3308); its
+			// deepseek models take thinking through `reasoning_effort` like OpenRouter and OpenCode.
+			const preservesNativeReasoningEffort =
+				candidate.provider === "openrouter" || candidate.provider === "opencode" || candidate.provider === "venice";
 			candidate.compat = {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort
@@ -4267,6 +4274,7 @@ async function generateModels() {
 		applyBaiReasoningConsistency(model);
 		applyPromptCacheMetadata(model);
 		applyImageInputMetadata(model);
+		applyDatedListPrice(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 

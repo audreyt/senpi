@@ -34,6 +34,8 @@ export interface StopHostOptions {
 	/** Terminate even when the host still reports open sessions. */
 	readonly force?: boolean;
 	readonly timeoutMs?: number;
+	/** Refuse unless the host answers both reads: a caller that judged it idle must not stop it unseen. */
+	readonly requireAnswer?: boolean;
 }
 
 export type StopHostResult =
@@ -71,6 +73,9 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	// it is allowed only against a host that reports nothing open, or by an explicit override.
 	const sessions = await probeSessionCount(options.socket, options.timeoutMs ?? 10_000);
 	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
+		return { action: "refuse", reason: "sessions_live" };
+	}
+	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
 	await writeStopIntent(generationPaths(paths, owner.instanceId), {

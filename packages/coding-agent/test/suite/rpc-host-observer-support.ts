@@ -79,6 +79,7 @@ export function evictionRegistry(entry: RpcSessionEntry, sessionId = "rpc-1"): R
 							cwd: entry.cwd,
 							status: entry.state,
 							attachments: entry.attachments,
+							idleMs: 0,
 							kind: entry.kind,
 							context: entry.context,
 						},

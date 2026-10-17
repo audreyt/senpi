@@ -6,7 +6,7 @@ import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
 import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
-import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
+import { HOST_EXIT_OK, HOST_EXIT_REFUSED, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
 import { detachBeforeClose } from "./host-session-detach.ts";
 import { mapError } from "./host-session-errors.ts";
@@ -27,6 +27,14 @@ type Model = { provider: string; id: string };
 export type HostSessionRequest = { target: HostTarget } & (
 	| ({ action: "open"; spec: ResolvedHostLaunchSpec; launchSpecPath?: string } & HostSessionOpen)
 	| { action: "close"; ref: SessionRef }
+	| {
+			action: "unload";
+			ref: SessionRef;
+			interrupt: boolean;
+			force: boolean;
+			clearQueue: boolean;
+			children: "refuse" | "detach";
+	  }
 	| { action: "model"; ref: SessionRef; model: Model }
 	| { action: "prompt"; ref: SessionRef; text: string }
 	| { action: "steer"; ref: SessionRef; text: string }
@@ -190,6 +198,19 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 				return await waitForHostSession(client, sessionId, request, (handler) => {
 					disconnected = handler;
 				});
+			case "unload": {
+				const answer = await client.unloadSession({
+					sessionId,
+					interrupt: request.interrupt,
+					force: request.force,
+					clearQueue: request.clearQueue,
+					children: request.children,
+				});
+				return {
+					exitCode: answer.outcome === "unloaded" ? HOST_EXIT_OK : HOST_EXIT_REFUSED,
+					payload: { action: "unload", sessionId, ...answer },
+				};
+			}
 			case "close": {
 				let reason: string | undefined;
 				const unsubscribe = client.onEvent((record) => {

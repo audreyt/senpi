@@ -21,7 +21,9 @@ import type {
 	LoginOptions,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { inferGoogleThinkingLevelMap } from "./google-thinking-generation.ts";
 import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
+import { costCardAt } from "./model-cost.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	AnyModel,
@@ -1241,11 +1243,12 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 	return isModelType(model, "chat") && model.api === api;
 }
 
-export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
+export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-	let rates: ModelCostRates = model.cost;
+	const card = costCardAt(model.cost, atMs);
+	let rates: ModelCostRates = card;
 	let matchedThreshold = -1;
-	for (const tier of model.cost.tiers ?? []) {
+	for (const tier of card.tiers ?? []) {
 		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
 			rates = tier;
 			matchedThreshold = tier.inputTokensAbove;
@@ -1295,11 +1298,16 @@ export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>
 	return undefined;
 }
 
+/** The level map a row carries, else the one inferred from documented provider controls. */
+export function inferThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	return inferOpenAIThinkingLevelMap(model) ?? inferGoogleThinkingLevelMap(model);
+}
+
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
+		const mapped = inferThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);

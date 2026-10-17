@@ -3,8 +3,14 @@ import { listSlots as listCredentialSlots, type PooledCredential } from "@earend
 import { resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
+import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
-import { acquireHalfOpenLease, type CredentialSlotRepository, type CredentialSlotState } from "./state-store.ts";
+import {
+	acquireHalfOpenLease,
+	type CredentialSlotRepository,
+	type CredentialSlotState,
+	type HalfOpenLease,
+} from "./state-store.ts";
 
 export type RotationLane = "stored" | "env";
 
@@ -21,11 +27,31 @@ async function releaseLeaseIfModelBlocked(
 	until: number | undefined,
 ): Promise<void> {
 	if (until === undefined) return;
-	await repository.mutateSlotState(providerId, lane, slotName, (current) => {
-		if (current?.lease?.id !== leaseId) return current;
-		const { lease: _released, ...rest } = current;
-		return rest;
-	});
+	await writeHealthUnlessStoreBusy(`lease release on ${slotName}`, () =>
+		repository.mutateSlotState(providerId, lane, slotName, (current) => {
+			if (current?.lease?.id !== leaseId) return current;
+			const { lease: _released, ...rest } = current;
+			return rest;
+		}),
+	);
+}
+
+/**
+ * The half-open probe lease for a slot whose cooldown elapsed. When the state
+ * file stays locked, the slot is probed without a lease rather than dropped:
+ * the lease only spreads probes across callers, and a store that cannot be
+ * written must not turn an expired cooldown into "no account available".
+ */
+function probeLease(
+	repository: CredentialSlotRepository,
+	providerId: string,
+	lane: RotationLane,
+	slotName: string,
+	now: number,
+): Promise<HalfOpenLease | typeof STORE_BUSY | undefined> {
+	return writeHealthUnlessStoreBusy(`probe lease on ${slotName}`, () =>
+		acquireHalfOpenLease(repository, providerId, lane, slotName, { now }),
+	);
 }
 
 export type RotationSlot = RunSlot & {
@@ -113,16 +139,17 @@ export async function listRotationSlots(
 			const modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 			// A slot still blocked for this model never takes the half-open probe lease:
 			// it cannot run, and holding the lease would starve other models' requests.
+			let lease: HalfOpenLease | typeof STORE_BUSY | undefined;
 			if (
 				acquireLeases &&
 				modelUntil === undefined &&
 				applicable?.blockedUntil !== undefined &&
 				applicable.blockedUntil <= now()
 			) {
-				const lease = await acquireHalfOpenLease(repository, providerId, "stored", slot.name, {
-					now: (sources.now ?? Date.now)(),
-				});
-				if (!lease) continue;
+				lease = await probeLease(repository, providerId, "stored", slot.name, now());
+				if (lease === undefined) continue;
+			}
+			if (lease !== undefined && lease !== STORE_BUSY) {
 				const leased = await repository.listSlots(providerId, "stored");
 				const leasedState = leased[slot.name];
 				const leasedApplicable = leasedState?.credentialRevision === storedRevision ? leasedState : undefined;
@@ -202,15 +229,15 @@ async function listEnvRotationSlots(
 			applicable?.blockedUntil !== undefined &&
 			applicable.blockedUntil <= now()
 		) {
-			const lease = await acquireHalfOpenLease(repository, providerId, "env", slot.name, {
-				now: (sources.now ?? Date.now)(),
-			});
-			if (!lease) continue;
-			const leased = await repository.listSlots(providerId, "env");
-			const leasedState = leased[slot.name];
-			applicable = leasedState?.credentialRevision === revision ? leasedState : undefined;
-			modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
-			await releaseLeaseIfModelBlocked(repository, providerId, "env", slot.name, lease.leaseId, modelUntil);
+			const lease = await probeLease(repository, providerId, "env", slot.name, now());
+			if (lease === undefined) continue;
+			if (lease !== STORE_BUSY) {
+				const leased = await repository.listSlots(providerId, "env");
+				const leasedState = leased[slot.name];
+				applicable = leasedState?.credentialRevision === revision ? leasedState : undefined;
+				modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
+				await releaseLeaseIfModelBlocked(repository, providerId, "env", slot.name, lease.leaseId, modelUntil);
+			}
 		}
 		slots.push(
 			overlayModelBlock(

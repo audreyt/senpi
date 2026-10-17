@@ -60,6 +60,7 @@ import {
 	isWebSocketSseFallbackActive,
 	recordWebSocketFailure,
 	recordWebSocketSseFallback,
+	recordWebSocketSuccess,
 } from "./openai-codex-responses/fallback-state.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
 import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -352,6 +353,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							throw new Error("Request was aborted");
 						}
 						assertSuccessfulOutput(output);
+						recordWebSocketSuccess(cacheSessionId);
 						stream.push({
 							type: "done",
 							reason: output.stopReason,
@@ -374,17 +376,18 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
 							throw error;
 						}
+						const phase = websocketStarted ? "after_message_stream_start" : "before_message_stream_start";
 						appendAssistantMessageDiagnostic(
 							output,
 							createAssistantMessageDiagnostic("provider_transport_failure", error, {
 								configuredTransport: transport,
 								...(websocketStarted ? {} : { fallbackTransport: "sse" }),
 								eventsEmitted: websocketStarted,
-								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
+								phase,
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
 							}),
 						);
-						recordWebSocketFailure(cacheSessionId, error);
+						recordWebSocketFailure(cacheSessionId, error, phase);
 						if (websocketStarted) {
 							throw error;
 						}

@@ -12,6 +12,8 @@ export type AccountSlot = {
 	source: "login" | "import" | "env";
 	blockedUntil?: number;
 	blockReason?: string;
+	/** When the current block was stored, so a turn that started earlier never clears it (senpi#3462). */
+	blockedAt?: number;
 	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
 	modelBlocks?: ModelBlocks;
 	/**
@@ -19,9 +21,14 @@ export type AccountSlot = {
 	 * rejected, or the grant a recovery produced, so one auth block gets at most one recovery (senpi#2926).
 	 */
 	authRecoveryGrant?: string;
+	/** Digest of the `anthropic` OAuth grant this account was copied from (senpi#3259), so the copy runs once. */
+	importedFrom?: string;
 };
 
-export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;
+export type SlotState = Record<
+	string,
+	{ blockedUntil?: number; blockReason?: string; blockedAt?: number; modelBlocks?: ModelBlocks }
+>;
 
 export type AnthropicSubscriptionCredential = OAuthCredential & {
 	accounts?: AccountSlot[];
@@ -109,6 +116,7 @@ export function upsertAccount(
 	const {
 		blockedUntil: _blockedUntil,
 		blockReason: _blockReason,
+		blockedAt: _blockedAt,
 		modelBlocks: _modelBlocks,
 		authRecoveryGrant: _authRecoveryGrant,
 		...identity

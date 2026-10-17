@@ -40,6 +40,32 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 	}
 }
 
+/**
+ * Closed allowlist of transport failures: Node `errno` / undici `code` names, and the provider SDKs'
+ * connection error class names (`APIConnectionError`, `APIConnectionTimeoutError`). Read only from the
+ * error chain's `code` and `name` fields, never from message text.
+ */
+export function categoryForTransportCode(code: string): ProviderDiagnosticCategory | undefined {
+	switch (code) {
+		case "ECONNRESET":
+		case "ECONNREFUSED":
+		case "ETIMEDOUT":
+		case "ENOTFOUND":
+		case "EAI_AGAIN":
+		case "EPIPE":
+		case "UND_ERR_SOCKET":
+		case "UND_ERR_CONNECT_TIMEOUT":
+		case "UND_ERR_HEADERS_TIMEOUT":
+		case "UND_ERR_BODY_TIMEOUT":
+		case "UND_ERR_CLOSED":
+		case "APIConnectionError":
+		case "APIConnectionTimeoutError":
+			return "network";
+		default:
+			return undefined;
+	}
+}
+
 /** The HTTP status a recognized token may arrive with; anything else is contradictory evidence. */
 export function isProviderCodeStatusCompatible(code: string, status: number): boolean {
 	switch (code) {
@@ -88,6 +114,7 @@ export function isProviderDiagnosticCategory(value: unknown): value is ProviderD
 		case "context_limit":
 		case "invalid_request":
 		case "provider_unavailable":
+		case "network":
 		case "unknown":
 			return true;
 		default:

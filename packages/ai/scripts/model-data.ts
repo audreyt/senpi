@@ -248,6 +248,39 @@ function validateModelValue(
 				errors.push(`${label} has invalid cost.${field}`);
 			}
 		}
+		validateEffectiveRates(label, value.cost.effectiveRates, errors);
+	}
+}
+
+const ISO_UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+
+function validateEffectiveRates(label: string, effectiveRates: unknown, errors: string[]): void {
+	if (effectiveRates === undefined) return;
+	if (!Array.isArray(effectiveRates) || effectiveRates.length === 0) {
+		errors.push(`${label} has invalid cost.effectiveRates`);
+		return;
+	}
+	const starts = new Set<number>();
+	for (const [index, rate] of effectiveRates.entries()) {
+		const rateLabel = `${label} cost.effectiveRates[${index}]`;
+		if (!isRecord(rate)) {
+			errors.push(`${rateLabel} is not an object`);
+			continue;
+		}
+		const from = typeof rate.effectiveFrom === "string" ? Date.parse(rate.effectiveFrom) : Number.NaN;
+		if (typeof rate.effectiveFrom !== "string" || !ISO_UTC_INSTANT.test(rate.effectiveFrom) || Number.isNaN(from)) {
+			errors.push(`${rateLabel} has invalid effectiveFrom`);
+		} else if (starts.has(from)) {
+			errors.push(`${rateLabel} repeats effectiveFrom ${rate.effectiveFrom}`);
+		} else {
+			starts.add(from);
+		}
+		for (const field of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+			const cost = rate[field];
+			if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) {
+				errors.push(`${rateLabel} has invalid ${field}`);
+			}
+		}
 	}
 }
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { changedCatalog, REFRESH_ENTRY_PREFIX, withRefreshEntry } from "./model-catalog-refresh.mjs";
+import { AI_CHANGELOG_FIXTURE } from "./model-catalog-refresh.test-support.mjs";
 
-const REAL_CHANGELOG = readFileSync(new URL("../packages/ai/CHANGELOG.md", import.meta.url), "utf8");
+const REAL_CHANGELOG = AI_CHANGELOG_FIXTURE;
 
 function releasedPart(changelog) {
 	const lines = changelog.split("\n");

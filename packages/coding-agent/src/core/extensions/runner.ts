@@ -31,6 +31,7 @@ import { dispatchContextMessages } from "./context-dispatch.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
+import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AgentBeforeSettleEvent,
 	BeforeAgentStartEvent,
@@ -988,7 +989,7 @@ export class ExtensionRunner {
 
 	private assertActive(): void {
 		if (this.staleMessage) {
-			throw new Error(this.staleMessage);
+			throw new StaleExtensionContextError(this.staleMessage);
 		}
 	}
 

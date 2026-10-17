@@ -351,6 +351,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		expect(extension.handlers.get("message_update")).toHaveLength(1);
 		expect(extension.handlers.get("message_end")).toHaveLength(1);
 		expect(extension.handlers.get("session_extensions_removed")).toHaveLength(1);
-		expect(extension.handlers.get("session_shutdown")).toHaveLength(2);
+		// The third stops following the 1M-window refusal state (senpi#3408).
+		expect(extension.handlers.get("session_shutdown")).toHaveLength(3);
 	});
 });

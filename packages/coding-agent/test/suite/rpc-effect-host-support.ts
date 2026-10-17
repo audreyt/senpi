@@ -29,17 +29,42 @@ const fauxModule = (): string => {
  * Two faux models; every turn is held until it is aborted, so a test decides when a turn ends and a
  * host killed mid-turn leaves a real `running` receipt behind.
  */
-const extensionSource =
-	(): string => `import { fauxAssistantMessage, fauxProvider } from ${JSON.stringify(fauxModule())};
+const extensionSource = (releaseDir: string): string => `import { existsSync, watch } from "node:fs";
+import { join } from "node:path";
+import { fauxAssistantMessage, fauxProvider } from ${JSON.stringify(fauxModule())};
+const releaseDir = ${JSON.stringify(releaseDir)};
+const released = () => existsSync(join(releaseDir, "release"));
+const whenReleased = () => new Promise((resolve) => {
+	if (released()) return resolve();
+	const watcher = watch(releaseDir, () => {
+		if (!released()) return;
+		watcher.close();
+		resolve();
+	});
+});
 const held = (_context, options) => new Promise((resolve) => {
 	const settle = () => resolve(fauxAssistantMessage("held turn ended"));
 	if (options?.signal?.aborted) settle();
 	else options?.signal?.addEventListener("abort", settle, { once: true });
 });
 export default function (pi) {
-	const faux = fauxProvider({ api: "fauxeffect", provider: "fauxeffect", models: [{ id: "faux-1" }, { id: "faux-2" }] });
+	const faux = fauxProvider({
+		api: "fauxeffect",
+		provider: "fauxeffect",
+		models: [{ id: "faux-1" }, { id: "faux-2" }, { id: "faux-stubborn" }],
+	});
 	faux.setResponses(Array.from({ length: 32 }, () => held));
 	pi.registerProvider(faux.provider);
+	// On faux-stubborn an agent_end handler holds the turn open until the test writes \`release\`, past any abort.
+	// A non-client abort, the way an extension or a host-side watchdog stops a turn.
+	pi.registerCommand("sysabort", { description: "abort the running turn as the system", handler: async (_args, ctx) => ctx.abort("system") });
+	pi.on("agent_end", async (_event, ctx) => {
+		if (ctx.model?.id === "faux-stubborn") await whenReleased();
+	});
+	// Publishes live extension work, the way background terminal jobs or monitors do.
+	pi.registerCommand("busyext", { description: "publish one live wake source", handler: async () => {
+		pi.events.emit("wake_source_state", { source: "test-background-job", activeCount: 1 });
+	} });
 }`;
 
 export async function rawClient(socketPath: string) {
@@ -106,7 +131,9 @@ export async function effectHostWorld() {
 	const bin = join(scratch, "bin");
 	await Promise.all([mkdir(cwd), mkdir(agentDir), mkdir(bin)]);
 	const extension = join(scratch, "faux-effect.mjs");
-	await writeFile(extension, extensionSource());
+	const releaseDir = join(scratch, "release");
+	await mkdir(releaseDir);
+	await writeFile(extension, extensionSource(releaseDir));
 	const bun = process.env.SENPI_RPC_TEST_BUN;
 	if (bun) await symlink(bun, join(bin, "bun"));
 	await symlink(process.execPath, join(bin, "node"));
@@ -193,6 +220,8 @@ export async function effectHostWorld() {
 		cwd,
 		agentDir,
 		start,
+		/** Let every faux-stubborn turn finish. */
+		release: (): Promise<void> => writeFile(join(releaseDir, "release"), "go"),
 		readEntries: async (path: string): Promise<Record<string, unknown>[]> =>
 			(await readFile(path, "utf8"))
 				.split("\n")

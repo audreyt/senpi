@@ -1,3 +1,21 @@
+## 2026-10-15 - senpi host session unload (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: `unload <ref> [--interrupt] [--force] [--clear-queue] [--children refuse|detach]`.
+
+### Why
+
+The CLI reaches every host session command.
+
+### Why an extension could not handle it
+
+Host CLI parsing is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: the action list and parse switch.
+
 ## 2026-10-13 - Treat a trailing print flag like an explicit mode after the retired command (senpi#3167)
 
 ### What changed

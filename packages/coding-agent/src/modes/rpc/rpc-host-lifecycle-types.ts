@@ -91,7 +91,27 @@ export interface RpcHostTrimmedEvent {
 	pauseMs: number;
 }
 
+/**
+ * A subscription account reported new limit windows (senpi#3370): every window it reports, 0-100 used and
+ * the reset time, for the provider and the credential slot that served the request. Host-wide, because an
+ * account's windows are the same whichever session asked.
+ */
+export interface RpcSubscriptionLimitsEvent {
+	readonly type: "subscription_limits";
+	readonly provider: string;
+	readonly account: string;
+	readonly windows: ReadonlyArray<{
+		readonly id: string;
+		readonly label: string;
+		readonly windowMinutes?: number;
+		readonly usedPercent: number;
+		readonly resetsAt?: string;
+	}>;
+	readonly reportedAt: string;
+}
+
 export type RpcHostLifecycleEvent =
+	| RpcSubscriptionLimitsEvent
 	| RpcHostSupersededEvent
 	| RpcHostStalledEvent
 	| RpcHostMemoryPressureEvent

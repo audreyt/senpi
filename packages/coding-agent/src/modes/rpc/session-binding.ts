@@ -87,6 +87,9 @@ export async function createRpcSessionBinding(
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
+			publishLoadedSurfacesChanged: (previous, digest) => {
+				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+			},
 			...options,
 		});
 	});

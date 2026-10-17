@@ -48,6 +48,7 @@ import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import tpsExtension from "./tps.ts";
 import ttsrExtension from "./ttsr/index.ts";
+import vertexModelGardenExtension from "./vertex-model-garden/index.ts";
 import videoInExtension from "./video-in/index.ts";
 import webfetchExtension from "./webfetch/index.ts";
 import websearchExtension from "./websearch/index.ts";
@@ -126,6 +127,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
+	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
+	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.

@@ -107,6 +107,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
+		instanceId,
 		settled: () => state.shuttingDown,
 		onActivity: () => owner.activity(),
 	});

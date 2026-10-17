@@ -1,3 +1,102 @@
+## 2026-10-16 - ProviderConfig declares ambient api-key auth (senpi#2327)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/types.ts`: the extension-facing `ProviderConfig` gains optional `ambientAuth` (`name`, `resolve({ ctx, signal })`), mirroring the composer input for providers that authenticate from a shared cloud credential chain (Google ADC, AWS env).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `vertex-model-garden` builtin registers through `pi.registerProvider(name, config)`; without the field on the public type, no extension can declare the ambient credential source the composer now understands.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: it is the public type declaration of the provider registration contract; `pi.registerProvider` is typed here and extensions cannot widen it themselves.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, the `ProviderConfig` field list, beside `oauth` and `fallbackEligible`.
+
+## 2026-10-14 - `AgentEndEvent.deadline` and the goal deadline-stop hold (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: additive `AgentEndEvent.deadline = { kind: "inactivity" | "max_runtime", limitMs, elapsedMs }` on the turn the deadline lease stopped. No new `stopReason`; expressed as an abort so no consumer breaks.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`, `index.ts`, `reload-reengagement.ts`: a deadline stop is never auto-continued — `afterSystemAbort`, the scheduled/immediate continuation admission, the todo-owed backstop call, and reload re-engagement all hold off while `deadlineStopPendingSinceLastTurn` is pending, until admitted user input clears it. The goal stays `active`; the `deadline-stop` entry renders a "turn stopped on a deadline" notice ending in "Action: send a message to continue".
+
+### Why
+
+A turn ended on a deadline must not be re-prompted back to life by the goal engine; the user, not the engine, decides to resume.
+
+### Why an extension could not handle it
+
+The goal engine is the only owner of its continuation admission; the hold must gate `afterSystemAbort`, the timer fire, the backstop and reload re-engagement at their own call sites, and the `deadline` field belongs on the public `AgentEndEvent` contract every consumer already reads.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` `AgentEndEvent` (public API contract).
+- MEDIUM: `monitor-continuation.ts` `afterSystemAbort` and `#continueIfEligible`; `index.ts` the `agent_end` handler; `reload-reengagement.ts`.
+
+## 2026-10-15 - pi.getPermissionPreset() (#3301, senpi#2465)
+
+### What changed
+
+`ExtensionAPI.getPermissionPreset(): PermissionPresetName | undefined` returns the preset the permission system enforces for this session now. The loader resolves it through the session's own `sessionManager` from `builtin/permission-system/preset-registry.ts`; before the host binds the runtime there is no session and it returns `undefined`.
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.getPermissionPreset()` declared beside `getFlag`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `getPermissionPreset()` reads the bound session's preset from the permission-system registry.
+
+### Why
+
+Clients (the desktop's Full-access UI) must show the preset actually enforced, including a settings-only Full access and the `full-access` default, not just the flag.
+
+### Why an extension could not handle it
+
+The value lives inside the permission-system builtin, and another extension can only reach it through the public `pi` object. Adding a member to `ExtensionAPI` that every loaded extension's `pi` carries is the loader's job; no extension can extend another extension's API object.
+
+### Expected merge conflict zones
+
+`types.ts` (the Flags block of `ExtensionAPI`) and `loader.ts` (beside `getFlag`).
+
+## 2026-10-15 - The stale guard throws a branded StaleExtensionContextError (senpi#3389)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts` and `packages/coding-agent/src/core/extensions/loader.ts`: `assertActive` throws `StaleExtensionContextError` (fork-only `stale-context-error.ts`, a plain `Error` subclass with the same message) instead of `Error`. `isStaleExtensionContextError` accepts the class first and still matches the two messages.
+
+### Why
+
+- Process-level containment of a retired ctx (senpi#3389) must match the guard exactly, not by message text another error could carry.
+
+### Why an extension could not handle it
+
+- The guard is the runner and loader themselves.
+
+### Expected merge conflict zones
+
+- LOW: the `throw` in each `assertActive` and one import line per file.
+
+## 2026-10-14 - `pi.appendEntry` takes `{ startupBookkeeping }` (senpi#3263)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.appendEntry` and `AppendEntryHandler` take an optional third argument, `AppendEntryOptions` with `startupBookkeeping?: boolean`. Existing two-argument calls are unchanged.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the extension API wrapper forwards the options argument to the runtime action.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: a session closed without a conversation should leave no file, but only the extension that wrote a `custom` entry knows whether it is disposable startup bookkeeping or user-created or billed state (senpi#3263). The default stays "keep the file".
+- `packages/coding-agent/src/core/extensions/loader.ts`: the option has to cross the loader's API wrapper to reach the session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `pi.appendEntry` signature is the public extension contract itself.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API wrapper that every extension calls is built by the loader.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, the `appendEntry` declaration in `ExtensionAPI` and the `AppendEntryHandler` type.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, the `appendEntry` wrapper and the `./types.ts` import list.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

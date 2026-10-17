@@ -34,6 +34,7 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { migrateAnthropicOAuthToSubscription } from "./anthropic-oauth-migration.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
 import {
 	CredentialStoreBusyError,
@@ -432,6 +433,7 @@ export class AuthStorage implements CredentialStore {
 	private readonly runtimeOverrides = new Map<string, string>();
 	private readonly extensionOAuthProviders = new Map<string, OAuthAuth>();
 	private errors: Error[] = [];
+	private readonly reportedMigrationSkips = new Set<string>();
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
 	private readState: AuthFileReadState;
@@ -504,7 +506,20 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		return { data: migrated.data, repaired: repaired.repaired, migrated: migrated.migrated };
+		const moved = migrateAnthropicOAuthToSubscription(migrated.data);
+		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
+			this.reportedMigrationSkips.add(moved.skipped);
+			this.recordError(
+				new Error(
+					`The Anthropic Claude subscription login in auth.json was not moved to Anthropic Subscription because ${moved.skipped}. It was left unchanged; sign in again with /login and choose "Anthropic Subscription (Claude Pro/Max)".`,
+				),
+			);
+		}
+		return {
+			data: moved.data,
+			repaired: repaired.repaired,
+			migrated: migrated.migrated || moved.migrated,
+		};
 	}
 
 	private recordError(error: unknown): void {

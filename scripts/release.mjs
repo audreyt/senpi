@@ -52,6 +52,8 @@ import {
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
 	REQUIRED_CHECK_NAME,
+	FORCED_TEST_SUITE_TIMEOUT_MS,
+	runForcedTestSuite,
 } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
@@ -333,7 +335,7 @@ function secureCiEvidence(version, dryRun, forceTests) {
 		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
 		dryRunLog(`test gate (preview, HEAD): ${plan.reason}`);
-		dryRunLog(forceTests ? "CI=1 npm test (--force-tests)" : 'wait for the release commit\'s green "Check and test"');
+		dryRunLog(forceTests ? "no CI wait (--force-tests runs the suite in this job)" : 'wait for the release commit\'s green "Check and test"');
 		return;
 	}
 	if (discardTimestampOnlyCatalogChange(process.cwd())) {
@@ -347,7 +349,7 @@ function secureCiEvidence(version, dryRun, forceTests) {
 		gitPush("main", false);
 	}
 	if (forceTests) {
-		log("test gate: --force-tests given; the suite runs in this job after the build");
+		log("test gate: --force-tests given; the suite runs in this job on the release code, before version and changelog stamping");
 		return;
 	}
 	awaitCiEvidence(
@@ -364,13 +366,25 @@ function secureCiEvidence(version, dryRun, forceTests) {
 	);
 }
 
+/**
+ * The forced suite runs right after the test-evidence step, on the release's code and catalog but before any
+ * version or changelog stamping: a test that reads a real CHANGELOG.md must see the tree CI would (v2026.10.16 release
+ * run 38824836070 failed when the suite ran on stamped changelogs). It cleans and builds first; the release cleans and
+ * builds again after stamping.
+ */
 function runForcedTests(dryRun, forceTests) {
-	if (!forceTests || dryRun) return;
+	if (!forceTests) return;
+	if (dryRun) {
+		dryRunLog("npm run clean, npm run build, then CI=1 npm test (--force-tests), before stamping");
+		return;
+	}
+	runClean(false);
+	runBuild(false);
 	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite serializes
 	// its subprocess-heavy tests to a single fork (see packages/coding-agent/vitest.config.ts). App code never
 	// branches on CI.
-	log("CI=1 npm test");
-	runCommand("npm", ["test"], { CI: "1" });
+	log(`CI=1 npm test (budget ${FORCED_TEST_SUITE_TIMEOUT_MS / 60_000} min)`);
+	runForcedTestSuite();
 }
 
 function main() {
@@ -391,6 +405,7 @@ function main() {
 	}
 
 	secureCiEvidence(version, args.dryRun, args.forceTests);
+	runForcedTests(args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
@@ -400,7 +415,6 @@ function main() {
 	runCheck(args.dryRun);
 	runClean(args.dryRun);
 	runBuild(args.dryRun);
-	runForcedTests(args.dryRun, args.forceTests);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);

@@ -22,6 +22,7 @@ import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvi
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { markLongContextRefused } from "./long-context.ts";
 import { isGrantRejected, refreshFailure } from "./refresh-failure.ts";
 import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
@@ -209,25 +210,66 @@ function visibleSdkMessage(message: SDKMessage): boolean {
 	return /^(?:content_block_start|content_block_delta|content_block_stop)$/.test(message.event.type);
 }
 
+/**
+ * The ambient lane has no account failover, so a refused 1M window is retried here: once, and only
+ * before anything visible streamed. Messages pass through as they arrive (system/init, api_retry and
+ * refusals keep their order and timing); the refused attempt is closed before the retry starts, after
+ * the refusal is recorded so the rebuilt options ask for the standard window (senpi#3408).
+ */
+async function* retryAtStandardWindowOnce(
+	attempt: () => Promise<AsyncIterable<SDKMessage>>,
+): AsyncGenerator<SDKMessage> {
+	const first = (await attempt())[Symbol.asyncIterator]();
+	let refused = false;
+	let finished = false;
+	try {
+		let visible = false;
+		for (;;) {
+			const next = await first.next();
+			if (next.done) {
+				finished = true;
+				return;
+			}
+			const failure = visible ? undefined : sdkFailure(next.value);
+			if (failure !== undefined && classifySdkError(failure).kind === "long_context_unavailable") {
+				refused = true;
+				break;
+			}
+			visible ||= visibleSdkMessage(next.value);
+			yield next.value;
+		}
+	} finally {
+		// Closes the first query on every exit (refusal, consumer return, error) before any retry spawns.
+		if (!finished) {
+			try {
+				await first.return?.();
+			} catch {
+				// Closing the first query must never replace the error (or the refusal) that ended it.
+			}
+		}
+	}
+	if (!refused) return;
+	markLongContextRefused();
+	yield* await attempt();
+}
+
 /** Resolves managed OAuth immediately before each subprocess spawn and retries only pre-delta failures. */
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
 	const pool = await managedPool(input.providerSettings, input.env);
 	if (!pool) {
-		const options = input.buildOptions("ambient");
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
 		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
 		for (const name of Object.keys(ambientEnvironment)) {
 			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
 		}
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
-		options.env = { ...ambientEnvironment, ...options.env };
-		yield* await createAttemptMessages(input, {
-			accountName: "ambient",
-			accounts: [],
-			authLane: "ambient",
-			options,
-		});
+		const ambientAttempt = async () => {
+			const options = input.buildOptions("ambient");
+			options.env = { ...ambientEnvironment, ...options.env };
+			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
+		};
+		yield* retryAtStandardWindowOnce(ambientAttempt);
 		return;
 	}
 	pool.accounts = await recoverAuthBlockedSlots({
@@ -239,6 +281,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		isGrantRejected,
 		reload: async () => storedAccounts(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool),
 		isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
+		now: activeBoundary.now(),
 		transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
 	});
 	yield* runFailover({
@@ -265,6 +308,8 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			});
 		},
 		classify: classifySdkError,
+		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
+		onLongContextRefused: () => markLongContextRefused(),
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		...(input.model === undefined ? {} : { model: input.model }),

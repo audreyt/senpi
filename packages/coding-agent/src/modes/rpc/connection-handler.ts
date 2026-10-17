@@ -1,3 +1,5 @@
+import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -57,6 +59,8 @@ import type {
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
+import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -64,6 +68,7 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
+	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
 	CONTINUE_FROM_LEAF_CAPABILITY,
@@ -79,6 +84,7 @@ import {
 	type EffectCommandContext,
 	runAbort,
 	runGetEffectStatus,
+	runQueuedInputChange,
 	runSetModel,
 	runSetThinkingLevel,
 } from "./effect-commands.ts";
@@ -119,6 +125,7 @@ import {
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
@@ -150,6 +157,8 @@ export interface RpcConnectionOptions {
 		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
 		connectionId: () => string | undefined;
 	};
+	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
+	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
 
 /**
@@ -352,12 +361,16 @@ export function createRpcConnectionHandler(
 
 	const recordLoadedSurfaces = (emitChange: boolean): ReturnType<typeof currentLoadedSurfaces> => {
 		const current = currentLoadedSurfaces();
-		const changed = loadedSurfacesDigest !== undefined && loadedSurfacesDigest !== current.digest;
+		const previous = loadedSurfacesDigest;
+		const changed = previous !== undefined && previous !== current.digest;
 		loadedSurfacesDigest = current.digest;
-		if (emitChange && changed && !suppressLoadedSurfaceEvents) {
-			outputEvent({ type: "loaded_surfaces_changed" });
-		}
+		if (emitChange && changed && !suppressLoadedSurfaceEvents) emitLoadedSurfacesChanged(previous, current.digest);
 		return current;
+	};
+
+	const emitLoadedSurfacesChanged = (previous: string | undefined, digest: string): void => {
+		if (options.publishLoadedSurfacesChanged) options.publishLoadedSurfacesChanged(previous, digest);
+		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
 	const requestMcpWireStatus = async (): Promise<void> => {
@@ -706,7 +719,7 @@ export function createRpcConnectionHandler(
 			outputEvent(commandsChanged);
 		}
 		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
-			outputEvent({ type: "loaded_surfaces_changed" });
+			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
 
@@ -855,6 +868,11 @@ export function createRpcConnectionHandler(
 					correlatedEvents.accept(event satisfies RpcCommandInvocationEvent);
 					return;
 				}
+				if (event.type === "queue_update") {
+					// Same route as every other event; only the minted ids are taken out of the projection.
+					correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
+					return;
+				}
 				if (event.type === "thinking_level_changed" || event.type === "model_changed") {
 					// Core emits the effective level only; the selection provenance lives beside it
 					// on the session and is what distinguishes an explicit choice from a default.
@@ -869,7 +887,19 @@ export function createRpcConnectionHandler(
 					// it for `get_state` because the getter clears once the turn settles.
 					const abortSource = session.currentAbortSource;
 					if (abortSource !== undefined) lastAbortSource = abortSource;
-					correlatedEvents.accept(abortSource === undefined ? event : { ...event, aborted: true, abortSource });
+					const deadline = session.currentDeadline;
+					const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
+					correlatedEvents.accept({
+						...event,
+						...(abortSource === undefined ? {} : { aborted: true, abortSource }),
+						...(abortedBy === undefined ? {} : { abortedBy }),
+						...(deadline === undefined ? {} : { deadline }),
+					});
+					return;
+				}
+				if (event.type === "session_abort") {
+					const abortedBy = ClientAdmissions.forSession(session).abortedBy;
+					correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
 					return;
 				}
 				correlatedEvents.accept(event);
@@ -984,8 +1014,10 @@ export function createRpcConnectionHandler(
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								EFFECT_LEDGER_CAPABILITY,
+								STEER_WHEN_IDLE_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
+								AUTH_KEY_VERIFY_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
@@ -1060,12 +1092,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "abort":
-				return runAbort(effectContext(), command, () => {
-					void session.abort().catch((cause: unknown) => {
-						// Abort is acknowledged once dispatched; report quiesce failures out of band.
+				return runAbort(effectContext(), command, () =>
+					session.abort().catch((cause: unknown) => {
+						// Report quiesce failures out of band; the answer never waits on them.
 						outputEvent({ type: "rpc_error", error: String(cause) });
-					});
-				});
+					}),
+				);
 
 			case "interrupt":
 				return success(
@@ -1091,7 +1123,12 @@ export function createRpcConnectionHandler(
 				return success(id, "check_reload_veto", await session.checkReloadVeto());
 			}
 
+			case "dequeue_message":
+			case "edit_queued_message":
+				return runQueuedInputChange(effectContext(), command);
+
 			case "clear_queue": {
+				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
 				return success(id, "clear_queue", {
 					steering: cleared.steering,
@@ -1103,13 +1140,19 @@ export function createRpcConnectionHandler(
 			case "get_steering_messages":
 				return success(id, "get_steering_messages", {
 					messages: [...session.getSteeringMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "steer"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "steer")
+						.map(clientFacingIdentity),
 				});
 
 			case "get_follow_up_messages":
 				return success(id, "get_follow_up_messages", {
 					messages: [...session.getFollowUpMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "followUp"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "followUp")
+						.map(clientFacingIdentity),
 				});
 
 			case "abort_branch_summary":
@@ -1415,6 +1458,17 @@ export function createRpcConnectionHandler(
 				return success(id, "get_session_stats", stats);
 			}
 
+			case "resolve_path":
+				return success(
+					id,
+					"resolve_path",
+					resolveMessagePath({
+						path: command.path,
+						cwd: session.cwd,
+						projectRoot: messagePathProjectRoot(session.cwd),
+					}),
+				);
+
 			case "memory_report": {
 				const answer = await answerMemoryReport(session);
 				return answer.ok ? success(id, "memory_report", answer.data) : error(id, "memory_report", answer.error);
@@ -1602,6 +1656,10 @@ export function createRpcConnectionHandler(
 			// Messages
 			// =================================================================
 
+			case "get_subscription_limits": {
+				return success(id, "get_subscription_limits", { accounts: subscriptionLimits.snapshot() });
+			}
+
 			case "get_messages": {
 				return success(id, "get_messages", {
 					messages: session.messages.map((message) =>
@@ -1686,6 +1744,7 @@ export function createRpcConnectionHandler(
 					name: info.name,
 					authType: info.authType,
 					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
 			}
@@ -1711,6 +1770,16 @@ export function createRpcConnectionHandler(
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
 				return success(id, "login_api_key");
+			}
+
+			case "verify_api_key": {
+				const verification = await verifyApiKey({
+					models: session.modelRegistry.getAll(),
+					provider: command.provider,
+					key: command.key,
+					signal: AbortSignal.timeout(15_000),
+				});
+				return success(id, "verify_api_key", verification);
 			}
 
 			case "logout": {
@@ -1820,7 +1889,16 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	// A single-session connection hears its account's new limit windows as they are reported. A host
+	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
+	const stopLimitEvents =
+		options.sessionId === undefined
+			? subscriptionLimits.subscribe((limits) =>
+					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
+				)
+			: () => {};
 	const dispose = async (): Promise<void> => {
+		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
 		questions.cancelAll();

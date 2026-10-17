@@ -1,5 +1,6 @@
 import { type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { AUTH_BLOCK_REPROBE_MS } from "../src/core/credential-pool/auth-reprobe.ts";
 import {
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
@@ -203,7 +204,7 @@ describe("Claude SDK OAuth failover", () => {
 		expect(emitted.at(-1)).toEqual(last);
 	});
 
-	it("blocks authentication failures until re-login instead of assigning a time-based expiry", async () => {
+	it("blocks authentication failures until a re-probe time (senpi#3264)", async () => {
 		const store = await storeWithAccounts();
 		const stream = runFailover({
 			accounts: [accountPool[0]!],
@@ -220,7 +221,9 @@ describe("Claude SDK OAuth failover", () => {
 		});
 		await expect(collect(stream)).rejects.toBeInstanceOf(ClassifiedSdkError);
 		const credential = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
-		expect(credential.accounts?.[0]).toMatchObject({ blockReason: "auth_error" });
-		expect(credential.accounts?.[0]?.blockedUntil).toBeUndefined();
+		expect(credential.accounts?.[0]).toMatchObject({
+			blockReason: "auth_error",
+			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
+		});
 	});
 });

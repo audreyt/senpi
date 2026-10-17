@@ -16,9 +16,11 @@ import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/cl
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
+import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
+import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -46,6 +48,7 @@ import {
 	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
 	RpcRequestTimeoutError,
+	requestDeadlineMs,
 } from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
@@ -67,6 +70,7 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcUnloadAnswer,
 } from "./rpc-types.ts";
 import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
@@ -175,6 +179,13 @@ export function isTransportGoneError(error: unknown): error is RpcTransportGoneE
 	);
 }
 
+/** The options of a typed `abort` (see `docs/rpc.md`, `abort`). */
+export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type" | "id" | "sessionId">;
+/** The host's answer to a typed `abort`; an older host answers with no data. */
+export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
+/** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
+export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
 
@@ -221,6 +232,8 @@ export class RpcClient {
 	private disconnectNotified = false;
 	private stopping = false;
 	private options: RpcClientOptions;
+	/** The host generation this client runs inside, named on every socket request (#3272). */
+	private readonly originHost = originHostInstance();
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -507,6 +520,17 @@ export class RpcClient {
 		await this.send(progress, true, undefined, false);
 	}
 
+	/** `unload_session`: a refusal is an answer (`outcome: "refused"` with reason and action), not a throw. */
+	async unloadSession(
+		options: Omit<Extract<RpcCommand, { type: "unload_session" }>, "type" | "id" | "sessionId"> & {
+			readonly sessionId?: string;
+		},
+	): Promise<RpcUnloadAnswer> {
+		const sessionId = options.sessionId ?? this.sessionId;
+		if (!sessionId) throw new Error("unload_session needs a session");
+		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
+	}
+
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
@@ -684,14 +708,40 @@ export class RpcClient {
 	}
 
 	/**
-	 * Abort current operation.
+	 * Abort current operation. With no options this is the fire-and-forget abort it always was (transport
+	 * loss resolves). With options it is the typed abort: `effectId` records a receipt, `awaitIdle` answers
+	 * once the turn stopped (or `graceMs` passed), `clearQueue` drains queued input first; the host's
+	 * answer (`effectId`, `state`, `effect`, `stopped`, `idle`, `cleared`) is returned.
 	 */
-	async abort(): Promise<void> {
-		try {
-			await this.send({ type: "abort" });
-		} catch (error) {
-			if (!isTransportGoneError(error)) throw error;
+	async abort(): Promise<void>;
+	async abort(options: RpcAbortOptions): Promise<RpcAbortAnswer>;
+	async abort(options?: RpcAbortOptions): Promise<RpcAbortAnswer | undefined>;
+	async abort(options?: RpcAbortOptions): Promise<unknown> {
+		if (options === undefined) {
+			try {
+				await this.send({ type: "abort" });
+			} catch (error) {
+				if (!isTransportGoneError(error)) throw error;
+			}
+			return;
 		}
+		return this.getData<RpcAbortAnswer>(await this.send({ ...options, type: "abort" }));
+	}
+
+	/**
+	 * The newest receipt of one effect (`get_effect_status`, capability `effect_ledger`). With `sessionPath`
+	 * the host reads that transcript from disk, so a session no host holds is answered without loading it.
+	 */
+	async getEffectStatus(
+		effectId: string,
+		options: { readonly sessionPath?: string } = {},
+	): Promise<RpcEffectStatusAnswer> {
+		const command = {
+			type: "get_effect_status" as const,
+			effectId,
+			...(options.sessionPath === undefined ? {} : { sessionPath: options.sessionPath }),
+		};
+		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
 	}
 
 	/** Abort with host refusals and transport loss surfaced to machine callers. */
@@ -962,6 +1012,11 @@ export class RpcClient {
 		return this.getData(response);
 	}
 
+	/** Which file a message's path means, by the engine's one rule (senpi#3415). */
+	async resolvePath(path: string): Promise<ResolvedMessagePath> {
+		const response = await this.send({ type: "resolve_path", path });
+		return this.getData(response);
+	}
 	/**
 	 * Export session to HTML.
 	 */
@@ -1344,6 +1399,7 @@ export class RpcClient {
 			...command,
 			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
 			...(ownId === undefined ? { id } : {}),
+			...(this.socket && this.originHost ? { [ORIGIN_HOST_INSTANCE_FIELD]: this.originHost } : {}),
 		} as RpcCommand;
 
 		if (!expectResponse) {
@@ -1365,7 +1421,7 @@ export class RpcClient {
 			const deadline = armRequestDeadline(
 				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
 					? PROMPT_COMPACTION_DEADLINE_MS
-					: REQUEST_DEADLINE_MS,
+					: requestDeadlineMs(command),
 				timeoutMessage,
 				expire,
 			);

@@ -34,16 +34,23 @@ export interface ParsedHostSessionArgs {
 export function parseHostSessionArgs(args: readonly string[]): ParsedHostSessionArgs | string {
 	const [action, ...rest] = args;
 	if (
-		!["open", "close", "model", "prompt", "steer", "abort", "read", "state", "list", "wait"].includes(action ?? "")
+		!["open", "close", "unload", "model", "prompt", "steer", "abort", "read", "state", "list", "wait"].includes(
+			action ?? "",
+		)
 	) {
 		return `Unknown host session command "${action ?? ""}".`;
 	}
 	const values: Record<string, string> = {};
 	const positional: string[] = [];
 	let messages = false;
+	const unloadFlags = { interrupt: false, force: false, clearQueue: false };
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
 		if (flag === "--json") continue;
+		if (action === "unload" && (flag === "--interrupt" || flag === "--force" || flag === "--clear-queue")) {
+			unloadFlags[flag === "--clear-queue" ? "clearQueue" : (flag.slice(2) as "interrupt" | "force")] = true;
+			continue;
+		}
 		if (flag === "--messages" && action === "read") {
 			messages = true;
 			continue;
@@ -56,7 +63,8 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 			flag === "--socket" ||
 			(action === "open" && ["--cwd", "--model", "--name", "--prompt", "--launch-spec"].includes(flag)) ||
 			(action === "read" && ["--tail", "--since"].includes(flag)) ||
-			(action === "wait" && ["--until", "--timeout"].includes(flag));
+			(action === "wait" && ["--until", "--timeout"].includes(flag)) ||
+			(action === "unload" && flag === "--children");
 		const value = rest[++index];
 		if (!allowed || value === undefined || value.startsWith("--")) return `Invalid option or missing value: ${flag}.`;
 		values[flag] = value;
@@ -95,6 +103,11 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 			return { ...common, command: { action, ref } };
 		case "list":
 			return { ...common, command: { action } };
+		case "unload": {
+			const children = values["--children"] ?? "refuse";
+			if (children !== "refuse" && children !== "detach") return "--children must be refuse or detach.";
+			return { ...common, command: { action, ref, ...unloadFlags, children } };
+		}
 		case "read": {
 			const tail = values["--tail"] === undefined ? undefined : integer(values["--tail"], 1);
 			if (tail === null) return "--tail must be a positive integer.";

@@ -7,6 +7,7 @@ import { sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 
@@ -70,13 +71,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 			: {}),
 		steering: typeof session.getSteeringMessages === "function" ? [...session.getSteeringMessages()] : [],
 		followUp: typeof session.getFollowUpMessages === "function" ? [...session.getFollowUpMessages()] : [],
-		ordered: [
-			...((
-				session as unknown as {
-					_queuedInputOrder?: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
-				}
-			)._queuedInputOrder ?? []),
-		].sort((a, b) => a.enqueueOrder - b.enqueueOrder),
+		ordered: typeof session.getQueuedInputs === "function" ? session.getQueuedInputs().map(clientFacingIdentity) : [],
 		autoCompactionEnabled: session.autoCompactionEnabled,
 		messageCount: session.messages.length,
 		pendingMessageCount: session.pendingMessageCount,

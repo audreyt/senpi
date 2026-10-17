@@ -6,11 +6,92 @@
 
 ### Added
 
+- Added the `elorian` provider with native image/video inputs, hosted-tool settings, account-aware limits, background runs, and client-side XML tool handoffs while retaining Elorian usage and provenance.
+
 ### Changed
 
 ### Fixed
 
 - Cursor `gemini-4-argon` and `gemini-3.8-flash` now advertise their 1,048,576-token context window (instead of the 200K fallback placeholder), and `gemini-4-argon` advertises its 1,000,000-token maximum output limit across live discovery and stored catalog restoration.
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+- Added lazy Google Application Default Credentials access-token resolution for Vertex Model Garden open-model integrations, reusing the existing Vertex credential and project environment helpers ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
+
+### Changed
+
+### Fixed
+
+- A `chatgpt-subscription` response that the backend drops mid-stream is retried on a fresh WebSocket. One drop used to move the whole session to SSE for 60 seconds; the session now falls back only after two drops in a row ([#3442](https://github.com/code-yeongyu/senpi/issues/3442)).
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+- Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+- Model cost cards can carry scheduled list-price changes (`cost.effectiveRates`, each with an ISO UTC `effectiveFrom`). Usage is billed with the card in force when it is computed, and the Argon model rows on `google` and `google-vertex` now carry the provider's 2026-12-01 price change ($2/$10 to $4/$20 per 1M tokens), so cost totals stay right across the switch without a catalog refresh ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
+
+### Changed
+
+### Fixed
+
+- OpenCode Go models now use the documented `https://opencode.ai/inference/go` base. The legacy `/zen/go` base has no route for the native generate-content wire, so the Argon Contributor model failed with a 404 page ([#3377](https://github.com/code-yeongyu/senpi/issues/3377)).
+
+- Newer-generation provider models that accept only discrete thinking levels now get a thinking level instead of a thinking budget, which they reject with HTTP 400. Rows without a thinking-level map, such as custom or discovered models, no longer offer the off and minimal levels those models reject ([#3292](https://github.com/code-yeongyu/senpi/issues/3292)).
+
+- A model that refuses a forced first-turn tool choice with "Thinking mode does not support this tool_choice" (opencode-go DeepSeek thinking models) no longer kills the turn at launch: the request is retried once without the forced choice ([#3324](https://github.com/code-yeongyu/senpi/issues/3324)).
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
+
+### Fixed
+
+- OpenCode Go models served over the Google Generative AI API now have a working transport; the refreshed catalog had added one, which broke the typed catalog. Two entries the provider no longer offers are removed from OpenCode Go.
+- Venice deepseek models (`deepseek-v4-1-flash`, `deepseek-v4-pro-0813` and the other deepseek-v4 entries) work again: requests no longer carry DeepSeek's `thinking` key, which Venice rejected with 400 on every call, and thinking runs through Venice's `reasoning_effort` instead ([#3308](https://github.com/code-yeongyu/senpi/issues/3308)).
+- Anthropic's "Third-party apps now draw from your extra usage" rejection is classified as terminal account exhaustion with a plain explanation of the billing path, and the `anthropic` provider no longer offers a Claude subscription OAuth login; subscriptions use the Agent SDK lane ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
 
 ### Removed
 

@@ -113,7 +113,10 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 		case "shard_path":
 			return shardPathOutcome(request.kind, request.owner, request.root);
 		case "gc":
-			return { exitCode: HOST_EXIT_OK, payload: { ...(await gcHostEndpoints(request.agentDir)) } };
+			return {
+				exitCode: HOST_EXIT_OK,
+				payload: { ...(await gcHostEndpoints(request.agentDir, { staleEngine: {} })) },
+			};
 		default:
 			return assertNever(request);
 	}

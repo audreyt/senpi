@@ -1,3 +1,22 @@
+## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
+
+### What changed
+
+- `packages/ai/src/api/google-vertex.ts`: `buildGoogleAuthOptions` and the GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT lookup move to the new fork-only, browser-safe `google-vertex-env.ts` and are imported back, unchanged in behavior.
+- `packages/ai/src/api/google-vertex-adc.ts` (fork-only): `getVertexAdcAccess` returns an ADC access token, target project and quota project through google-auth-library, the same credential chain `@google/genai` uses; it is Node-only and reached solely through its lazy boundary `google-vertex-adc.lazy.ts`, so browser bundles that include `google-vertex.ts` never pull google-auth-library.
+
+### Why
+
+- `packages/ai/src/api/google-vertex.ts`: sharing its credential and project environment helpers lets the `vertex-model-garden` builtin call Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, without a second credential path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/google-vertex.ts`: the extension owns registration and transport, but the credential and project environment helpers it must reuse were private to this adapter; sharing them requires moving them to an importable module.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed
@@ -273,3 +292,41 @@ The Mistral message mapping runs inside the provider adapter after every extensi
 ### Expected merge conflict zones
 
 - LOW: the `msg.role === "user"` branch of `toChatMessages` and the new `appendUserMessage` helper above it in `mistral-conversations.ts`.
+
+## 2026-10-13 - Generation-4 ids use discrete thinking levels (senpi#3292)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `usesGoogleThinkingLevel` also matches generation-4 and later ids through `isGoogleGeneration4OrLaterModelId` (`packages/ai/src/google-thinking-generation.ts`, anchored to a complete id or a `models/` namespace), so both adapters (`google-generative-ai`, `google-vertex`) send `thinkingLevel` and, when thinking is off, clamp to the lowest supported level instead of sending `thinkingBudget`.
+
+### Why
+
+The provider documents that its generation-4 models support only `LOW`, `MEDIUM` and `HIGH`, and reject a thinking budget (or `MINIMAL`) with HTTP 400. Under the generation-3-only match, every request to those models failed.
+
+### Why an extension could not handle it
+
+The thinking wire form is chosen inside the shared Google request builder, below any extension hook.
+
+### Expected merge conflict zones
+
+The id matchers in `usesGoogleThinkingLevel`.
+
+## 2026-10-16 - One mid-stream WebSocket drop no longer moves a chatgpt-subscription session to SSE (senpi#3442)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the WebSocket catch block passes the failure phase (`before_message_stream_start` or `after_message_stream_start`) to `recordWebSocketFailure`, and a completed WebSocket response calls `recordWebSocketSuccess`.
+- `packages/ai/src/api/openai-codex-responses/fallback-state.ts`: `recordWebSocketFailure` takes that phase. A failure before output still arms the 60 s SSE cooldown at once. A failure after output starts arms it only on the second one in a row (`CODEX_WEBSOCKET_MID_STREAM_FAILURES_BEFORE_FALLBACK`); `recordWebSocketSuccess` and `clearWebSocketFallbackState` reset the run.
+
+### Why
+
+Every mid-stream close (1006 reset, 1011, 1001, even 1000) armed the cooldown, so the agent's retry of that turn and every request in the next minute went over SSE. Upstream Codex retries a dropped stream on a fresh WebSocket and switches to HTTPS only after `stream_max_retries` (`codex-rs/core/src/responses_retry.rs`). A before-output failure keeps the cooldown because that same request is served over SSE with no visible error.
+
+### Why an extension could not handle it
+
+Transport selection and the fallback cooldown live inside the provider adapter, below every extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: the WebSocket `catch` block in `stream()` of `openai-codex-responses.ts` (upstream calls a two-argument `recordWebSocketFailure` that adds the session to a permanent fallback set).
+- LOW: `fallback-state.ts` has no upstream counterpart.

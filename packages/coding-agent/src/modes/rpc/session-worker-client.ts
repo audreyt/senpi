@@ -275,6 +275,18 @@ export class SessionWorkerClient {
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
+			case "loaded_surfaces": {
+				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer || !sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				writer.publishLoadedSurfacesChanged(sessionId, message.previous, message.digest);
+				acknowledge(message.signal, true);
+				return;
+			}
 			case "request_close":
 				this.requestClose?.();
 				return;

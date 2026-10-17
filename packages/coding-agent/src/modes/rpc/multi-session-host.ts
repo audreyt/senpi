@@ -18,7 +18,9 @@ import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
@@ -35,7 +37,7 @@ import { computeRuntimeBuildId, RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./r
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import { RpcSessionRegistry } from "./session-registry.ts";
+import { RpcSessionRegistry, RpcSessionRegistryError } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
 	readSocketIdentityFile,
@@ -93,6 +95,7 @@ interface Connection {
  * events remain visible to every connection. Responses and extension UI
  * requests remain requester-only; foreign observation uses attach-on-open.
  */
+
 export async function runMultiSessionHost(options: MultiSessionHostOptions): Promise<never> {
 	return runAsHostGenerationProcess(() =>
 		options.listen === undefined || options.listen === "stdio://"
@@ -110,6 +113,7 @@ export function createHostCore(
 	hooks: HostCoreHooks = {},
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
+	const endpointSocket = publicEndpointSocket(options);
 	const pathReservations = createEndpointReservations({
 		agentDir: options.agentDir,
 		socket: listenSocketPath(options),
@@ -147,9 +151,40 @@ export function createHostCore(
 			emptyExitMs: policy.emptyExitMs,
 			onEmptyExit: idle.onEmptyExit,
 			onHandoffParked: idle.onHandoffParked,
+			...(endpointSocket === undefined
+				? {}
+				: {
+						handoverParkedDir: createHostDaemonPaths({
+							socket: endpointSocket,
+							agentDir: options.agentDir,
+						}).dir,
+					}),
 			canExitWhenEmpty: idle.canExitWhenEmpty,
 		},
 	);
+	if (endpointSocket !== undefined)
+		reopenHandoverParkedSessions(
+			async (entry) => {
+				const refused = await router.reopenParked(entry);
+				if (refused?.success !== false) return;
+				const detail =
+					typeof refused.errorData === "object" && refused.errorData !== null && !Array.isArray(refused.errorData)
+						? Object.fromEntries(Object.entries(refused.errorData))
+						: undefined;
+				throw refused.error === "session_path_in_use"
+					? new RpcSessionRegistryError("session_path_in_use", undefined, detail)
+					: new RpcSessionRegistryError("open_failed", refused.error);
+			},
+			options.agentDir,
+			endpointSocket,
+			{
+				hostInstance: hostInstanceId(),
+				hostSocket: endpointSocket,
+				...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
+			},
+		).catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
+		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
 	const handle = async (line: string): Promise<void> => {
 		let parsed: unknown;
@@ -226,7 +261,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const connections = new Map<string, Connection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
 	// connection that has only sent observing reads (`status`) is not occupancy.
-	const occupancy = new ClientOccupancy(() => {});
+	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
 	let draining = false;
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
@@ -274,6 +309,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		hostContext,
 		{
 			onSessionCountChange: (size) => trim.observe(size),
+			// A draining predecessor parks its retained sessions for the successor and must not reopen
+			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
+			shouldReopenParked: () => !draining,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
 			...(canHandOver && {
 				handover: {
@@ -572,6 +610,17 @@ function hostSessionContext(socketPath: string): SessionContext {
 function listenSocketPath(options: MultiSessionHostOptions): string | undefined {
 	if (options.listen === undefined || options.listen === "stdio://") return undefined;
 	return resolveSocketPath(options.listen, options.agentDir);
+}
+
+/**
+ * The PUBLIC endpoint clients address, matching `hostSessionContext`: a supervised host's own
+ * listener is a private hop, so the daemon-directory key must come from the supervisor's public
+ * socket or every generation hashes a different directory (senpi#3282). Bare hosts bind the path.
+ */
+function publicEndpointSocket(options: MultiSessionHostOptions): string | undefined {
+	const supervised = readHostWatchdogConfigFromBrandEnv();
+	if (supervised !== undefined) return supervised.publicSocket;
+	return listenSocketPath(options);
 }
 
 function resolveSocketPath(value: string, agentDir: string): string {

@@ -12,6 +12,70 @@
 
 ### Removed
 
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a turn while its context transform or API key lookup is still running behaves as it did before the start bound covered that work: the request still goes out with the aborted signal and the turn ends aborted; the bound only ends a step that nothing else ended.
+
+- A turn no longer waits forever when the context transform, the API key lookup or the provider's stream function never finishes: the start bound (or the idle bound when none is set) now covers that work and ends the turn with a provider timeout ([#3471](https://github.com/code-yeongyu/senpi/issues/3471)).
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.13] - 2026-10-13
 
 ### Breaking Changes

@@ -61,3 +61,8 @@ export interface OpenAISettings {
 export interface ProviderConcurrencySettings {
 	maxConcurrency?: number; // default: unlimited; 0 disables the cap
 }
+
+export interface TurnDeadlineSettings {
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; renewed only by tool execution events and admitted user input
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables; hard cap from prompt accept
+}

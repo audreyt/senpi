@@ -1,3 +1,18 @@
+## 2026-10-15 - Argon preset (senpi#3385)
+
+### What changed
+
+- `gemini-4-argon.ts` (new): a `corePrompt` that composes the default section builders in the default order and changes four spots through new builder options, so every untouched section stays byte-identical to the default: identity (names the model), `buildIntentGate({ routingLineRule })` (terminal only: "The line is plain prose, and the tool calls that start the work follow it in the same response"), `buildWorkingTaskSection({ opening })` (only when `eval` is a session tool: "Writing code is your superpower ..." in the voice of the ultrawork skill's "Parallel execution" section: one eval cell per step, `for`/`if`/`try` control flow, `parallel(thunks)` for independent lookups, one action at a time only for unseen-input, deploy, approval and destructive calls, files through the cell's tool calls), `buildPoliciesSection({ errorRule })` (transient failures retry as is, other failures change strategy and never repeat the same call). `workstationDialect: "gemini"` (plain sentence pair, no tags, no caps). A `## Search Grounding` paragraph renders as the tuning section only when `web_search` is selected; the date stays in the environment-context message (senpi#2093).
+- `matchers.ts`: `hasGemini4ArgonSignal` / `isGemini4ArgonModel` match `gemini-4-argon` with the usual `[/@:._-]` boundaries, so `google/gemini-4-argon`, `:batch`, `-contributor`, the `-low/-medium/-high` SKUs and the display name resolve; bare `gemini-4` and other generations of the family do not. `contract.ts`: the branch sits last (after Grok), a shared model case and the auto-resolved name are added; `settings.ts` / `presets.ts`: the name joins the union, `VALID_PRESETS` and the dispatch.
+- `test/suite/prompt-presets-gemini-4-argon.test.ts` (new): id shapes and non-matches, the catalog sweep, forced preset, a section-by-section comparison with the default core on every surface (exactly the tuned sections differ; the Intent Gate differs on terminal only), the eval/web_search gating, the dialect, and the baseline keys. `prompt-presets-native-baseline.json`: six `gemini-4-argon:*` hashes added, every existing hash untouched (the generation sweep proves every other model unchanged).
+
+### Why
+
+- Argon was listed on eight providers with no preset, so it received the bare default plus the maximum-emphasis workstation block. The provider's published guidance (direct instructions, no persuasive emphasis; plain pre-tool text; 10-20 active tools; parallel calls when independent; the family's pull toward shell commands and code-first inspection) and the owner's steer (eval cells as the model's superpower, few individual tool names) shaped each edit; the design with sources is the Notion spec linked from the issue.
+- Builder options instead of string replacement on rendered sections: a wording change in the shared core then reaches Argon automatically and a drifted anchor cannot fall back silently.
+
+---
+
 ## 2026-10-08 - Claude Haiku 5.5 preset (senpi#2917)
 
 ### What changed
@@ -19,6 +34,26 @@
 - LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-haiku-5-5.ts` is fork-only.
 
 # prompt-preset Extension Changes
+
+## 2026-10-15 - Every preset states the same handoff condition (senpi#3323)
+
+### What changed
+
+- `gpt-surface.ts` `GPT_HANDOFF_MOMENTS` carries the senpi#3323 condition from `dynamic-prompt/handoff.ts`; `gpt-6-astra.ts` `HANDOFF_REPORT` now interpolates `GPT_HANDOFF_MOMENTS.terminal` instead of a copy of it, so its app replacement cannot drift.
+- Final-message rules apply to a change ("if the turn changed something", "The final message of a change ...", "for a change, the Handoff block"): `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `grok-4.5.ts`, and `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` with its app replacement.
+- `test/suite/prompt-presets-native-baseline.json` is recaptured: every terminal and app hash changes, every chat hash is unchanged.
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#3323).
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The handoff-moment and final-message sentences in each preset.
 
 ## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)
 

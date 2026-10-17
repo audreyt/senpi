@@ -1,3 +1,114 @@
+## 2026-10-16 - Context size warnings use resource notices (senpi#3460)
+
+### What changed
+
+- `interactive-mode.ts`: `showLoadedResources` groups returned context diagnostics and skill catalog warnings tagged `category: "size-limit"` in the "Context size limits" notice with a size-specific explanation, including during quiet startup when diagnostics are requested. Ordinary skill diagnostics retain the "Skill conflicts" notice and are not mixed with size warnings.
+
+### Why
+
+Size warnings written to stderr disappear once the TUI owns the terminal.
+
+### Why an extension could not handle it
+
+The loaded-resource notices are rendered by interactive mode.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`: the `addDiagnosticNotice` calls in `showLoadedResources`.
+
+## 2026-10-15 - A failed turn shows its provider failure reason and action (senpi#3228)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: on an `agent_end` with `failure` and no retry pending, the TUI shows one error line, `<reason>. Action: <action>.`, from `formatProviderFailure`.
+
+### Why
+
+The raw provider error said what failed but not what the user should do.
+
+### Why an extension could not handle it
+
+The line is part of the built-in turn-end rendering in `InteractiveMode`, which extensions do not own.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_end` case of the session event handler.
+
+## 2026-10-16 - Message path links: per-link errors, cached misses, hyperlink terminals only (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/message-path-links.ts`: a bad `%` encoding skips only that link (M1); answers (found or not) and project roots are cached per working directory with LRU order (M2, L5); links are rewritten only when the terminal shows hyperlinks (M3); indented code, images and `<...>` targets are skipped, a fence closes only on a matching marker, link titles are kept, drive-letter targets are paths (M4, L2, L3); network or device paths are never resolved (H1). Options inject `hyperlinks` and `resolve` for tests.
+
+### Why
+
+The Opus review of senpi#3419 found these.
+
+### Why an extension could not handle it
+
+It is the built-in link transformer.
+
+### Expected merge conflict zones
+
+- None beyond the file this PR adds.
+
+## 2026-10-16 - Message path links open the file the engine resolves (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/message-path-links.ts` (new): a Markdown transformer that rewrites a link whose target is a path into a `file://` link to `resolveMessagePath`'s realpath (cwd, then project root); URLs, anchors, code blocks and inline code are untouched, a path that resolves to nothing keeps its text.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getMarkdownTransformers` adds it after mermaid.
+
+### Why
+
+A relative link in a message opened nothing in the terminal; the TUI now opens what RPC clients open.
+
+### Why an extension could not handle it
+
+It uses the core resolver and must run for every transcript message.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getMarkdownTransformers` and the transformer fields.
+
+## 2026-10-15 - A retired extension ctx never exits the session (senpi#3389)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `uncaughtCrash` returns early when the error is the runner's stale-ctx guard (`containStaleExtensionError` from the new fork-only `core/stale-extension-containment.ts`). The full stack goes to the debug log, and the session keeps running. Every other uncaught throw still stops the UI and exits 1. Its two crash handlers are registered with `markModeCrashHandler`, so the bootstrap listeners in `cli-main.ts` defer to them.
+
+### Why
+
+- An extension that kept a ctx past an automatic session replacement or reload and used it from a timer threw the stale guard synchronously, and the TUI exited mid-task with "exiting due to uncaughtException: ... extension ctx is stale ..." (oh-my-openagent#7114, a 5.1.33 user report). The guard throws before the retired generation's operation runs, so ending the live session added nothing but the crash. Regression: `test/suite/regressions/stale-extension-ctx-never-exits.test.ts`.
+
+### Why an extension could not handle it
+
+- The process-level crash handler belongs to interactive mode. Each extension can only guard its own callbacks (#2549, #2551, #1129), so one that misses the pattern still ended every session.
+
+### Expected merge conflict zones
+
+- LOW: the early returns at the top of `uncaughtCrash`; the `markModeCrashHandler` calls beside the two `prependListener` calls; the hidden-stdout-log import block.
+
+## 2026-10-15 - The handoff block folds into one muted line in the transcript (senpi#3323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/handoff-fold.ts` (new): `splitHandoffBlocks` folds only a paragraph (outside code fences) whose labels are exactly the prompt templates' sequence: `Ask:` [`wanted:`] `For you:` `Now:` `Next:` with nothing before `Ask:`, or an outcome sentence followed by exactly `You need:` `Now:` `Next:` (GPT presets). Prose that merely uses those words stays text. The kept answer is the `For you` slot, or the GPT outcome followed by its `You need` slot, so the result sentence is never folded away. A block still streaming renders raw until its `Next:` arrives, then folds.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: a block renders as one dim `▸ Handoff · Now: … · Next: …` line (`handoff-line`) followed by its answer as ordinary text; open, it renders `▾ Handoff` and the block as written, dimmed (`handoff-body`).
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the fold follows Ctrl+O (`app.tools.expand`, which already toggles assistant output); a left click on the line or the open body toggles that block alone, like a thinking run. The line is cut to the width, never wrapped.
+
+### Why
+
+- A reader hunting for the answer had to read past Ask / wanted / Now / Next bookkeeping on every work turn. The answer in `For you` stays in full; nothing else is lost, it is one key or click away.
+
+### Why an extension could not handle it
+
+- Assistant text rendering is core TUI; `MarkdownTransformer` can rewrite text but cannot add a toggleable, width-cut component.
+
+### Expected merge conflict zones
+
+- `createAssistantRenderDescriptors`'s `text` case; `AssistantMessageComponent.createRenderChild` / `setExpanded` / `createMessageSignature`.
+
 ## 2026-10-12 - Explicit thinking saves own the startup default (senpi#3178)
 
 ### What changed

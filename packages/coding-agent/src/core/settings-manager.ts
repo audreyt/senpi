@@ -37,6 +37,7 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
+import type { ContextFileLimits } from "./context-files.ts";
 import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
@@ -192,6 +193,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
+	contextFiles?: ContextFileLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;
@@ -229,6 +231,8 @@ export interface Settings {
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -478,6 +482,8 @@ export function getInMemorySettingsPath(scope: SettingsScope): string {
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
+	trustFromFullAccess?: boolean;
 }
 
 export interface SettingsStorage {
@@ -834,7 +840,7 @@ export class SettingsManager {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -845,6 +851,8 @@ export class SettingsManager {
 			initialSources,
 			settingsPaths,
 		);
+		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -1097,6 +1105,14 @@ export class SettingsManager {
 		};
 	}
 
+	getTurnInactivityMs(): number | undefined {
+		return this.settings.turn_inactivity_ms;
+	}
+
+	getTurnMaxRuntimeMs(): number | undefined {
+		return this.settings.turn_max_runtime_ms;
+	}
+
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
 		return configured === "remind" || configured === "off" ? configured : "force";
@@ -1111,12 +1127,35 @@ export class SettingsManager {
 		return this.projectTrusted;
 	}
 
+	/**
+	 * True when this session's project trust came only from its Full access preset (never asked, never
+	 * saved): leaving Full access withdraws it, and going back restores it (senpi#3414, #3420).
+	 */
+	private trustFromFullAccess = false;
+
+	isTrustFromFullAccess(): boolean {
+		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
+	/** True when a Full-access-only trust was withdrawn in this session and Full access may restore it. */
+	canRestoreFullAccessTrust(): boolean {
+		return this.trustFromFullAccess && !this.projectTrusted;
+	}
+
+	/** Counts project-trust changes; a reload compares it before installing what it loaded (#3420). */
+	private trustEpoch = 0;
+
+	getTrustEpoch(): number {
+		return this.trustEpoch;
+	}
+
 	setProjectTrusted(trusted: boolean): void {
 		if (this.projectTrusted === trusted) {
 			return;
 		}
 
 		this.projectTrusted = trusted;
+		this.trustEpoch += 1;
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 

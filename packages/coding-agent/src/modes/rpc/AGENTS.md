@@ -52,7 +52,9 @@ client-admissions.ts, client-admission-record.ts
 effect-ledger.ts, effect-record.ts
                           `rpc_effect` receipts for abort/set_model (accepted before applied, reopen seal) + one EffectStatus;
                           effect-commands.ts (handlers), effect-transcript-lookup.ts (`get_effect_status { sessionPath }`), effect-status.ts,
-                          effect-outcome-copy.ts (reason/action copy), effect-crash-point.ts (test-only SIGKILL hook)
+                          effect-outcome-copy.ts (reason/action copy), effect-crash-point.ts (test-only SIGKILL hook);
+                          session-effect-status.ts (`effect_status` wire record + the pending-transition bus the
+                          status stream delivers after the causing record)
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules after returning (`gc-last-run.json`)
 host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reaper, stall refusal
