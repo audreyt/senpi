@@ -1,3 +1,44 @@
+## 2026-10-17 - Discover Elorian API credentials
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: maps `elorian` to `ELORIAN_API_KEY`.
+- `packages/ai/src/types.ts`: includes Elorian in the known provider union.
+
+### Why
+
+- `packages/ai/src/env-api-keys.ts`: Elorian credentials must participate in provider discovery and credential slots.
+- `packages/ai/src/types.ts`: built-in provider enumeration must remain assignable to the public provider type.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/env-api-keys.ts`: the built-in credential mapping is read before extensions load.
+- `packages/ai/src/types.ts`: the public provider union is a compile-time contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: provider environment map.
+- `packages/ai/src/types.ts`: `KnownProvider`.
+
+## 2026-10-14 - Cursor `gemini-4-argon` 1M context/1M output and `gemini-3.8-flash` 1M context capabilities
+
+### What changed
+
+- `packages/ai/src/cursor/model-capabilities.ts`: `CursorModelCapability` adds optional `maxTokens?: number`; `CURSOR_MODEL_CAPABILITIES` adds `gemini-4-argon` (`window: 1_048_576`, `maxTokens: 1_000_000`, `parameterOrder: ["effort"]`, `low`/`medium`/`high`) and `gemini-3.8-flash` (`window: 1_048_576`, `parameterOrder: ["effort"]`, `low`/`medium`/`high`).
+- `packages/ai/src/cursor/catalog-grouping.ts`: `CursorCatalogEntry` carries optional `maxTokens` from `CURSOR_MODEL_CAPABILITIES`.
+- `packages/ai/src/cursor/store-migration.ts`: `entryToModel` prefers `entry.maxTokens`, and `regroupStoredCursorModels` upgrades stored derived identities whose fallback `contextWindow` (`200_000`) or `maxTokens` predates a capability table entry.
+
+### Why
+
+Cursor's `GetUsableModels` discovery returns no context window and a uniform 64,000 `maxTokens` placeholder, causing `cursor/gemini-4-argon` (1,048,576 context / 1,000,000 output) and `cursor/gemini-3.8-flash` (1,048,576 context) to fall back to `200K` context and `64K` max output.
+
+### Why an extension could not handle it
+
+Cursor capability normalization and stored-model migration live in `packages/ai/src/cursor` below the extension layer.
+
+### Expected merge conflict zones
+
+- `CURSOR_MODEL_CAPABILITIES` in `packages/ai/src/cursor/model-capabilities.ts`, `normalizeCursorCatalog` in `packages/ai/src/cursor/catalog-grouping.ts`, and `regroupStoredCursorModels` in `packages/ai/src/cursor/store-migration.ts`.
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 
 ### What changed

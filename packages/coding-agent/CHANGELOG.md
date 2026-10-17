@@ -6,9 +6,13 @@
 
 ### Added
 
+- Added `elorian/elorian-1-agent` with `ELORIAN_API_KEY` authentication, native image/video inputs, account-aware limits, and local tool execution through XML handoffs.
+
 ### Changed
 
 ### Fixed
+
+- `cursor-cli-oauth` catalog entries now preserve per-model `maxTokens` overrides from the shared Cursor capability table (such as `gemini-4-argon`'s 1M output limit) instead of clamping every model to 64K.
 
 ### Removed
 
