@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
 ### Fixed
 
 - Cursor `gemini-4-argon` and `gemini-3.8-flash` now advertise their 1,048,576-token context window (instead of the 200K fallback placeholder), and `gemini-4-argon` advertises its 1,000,000-token maximum output limit across live discovery and stored catalog restoration.
