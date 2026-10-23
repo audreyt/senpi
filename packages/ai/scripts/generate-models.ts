@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { applyDatedListPrice } from "./dated-list-prices.ts";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
@@ -35,9 +36,11 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	type ModelDataManifest,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	stableGeneratedAt,
 	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
@@ -2706,7 +2709,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// - null/undefined/@ai-sdk/openai-compatible → openai-completions
 		const opencodeVariants = [
 			{ key: "opencode", provider: "opencode", basePath: "https://opencode.ai/zen" },
-			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/zen/go" },
+			// Go's documented base (https://opencode.ai/docs/go/). The legacy /zen/go keeps the OpenAI and
+			// Anthropic wires but has no native generate-content route (404), senpi#3377.
+			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/inference/go" },
 		] as const;
 
 		for (const variant of opencodeVariants) {
@@ -4000,7 +4005,11 @@ async function generateModels() {
 			candidate.id.includes("deepseek-v4") &&
 			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
 		) {
-			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
+			// Venice's request schema is additionalProperties:false and has no `thinking` field, so
+			// DeepSeek's native `thinking: { type }` object 400s every request there (senpi#3308); its
+			// deepseek models take thinking through `reasoning_effort` like OpenRouter and OpenCode.
+			const preservesNativeReasoningEffort =
+				candidate.provider === "openrouter" || candidate.provider === "opencode" || candidate.provider === "venice";
 			candidate.compat = {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort
@@ -4265,6 +4274,7 @@ async function generateModels() {
 		applyBaiReasoningConsistency(model);
 		applyPromptCacheMetadata(model);
 		applyImageInputMetadata(model);
+		applyDatedListPrice(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
@@ -4432,9 +4442,25 @@ async function generateModels() {
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
+
+			// Idempotent timestamp: when the regenerated content (the whole manifest except generatedAt)
+			// equals the committed catalog, keep its generatedAt so a content-unchanged regeneration is
+			// byte-identical and the drift check stays green. An explicit --generatedAt always wins.
+			let stableTs = generatedAt;
+			if (generatorOptions.generatedAt === undefined) {
+				const newManifest = createModelDataManifest(modelDataStructure, fileContents, generatedAt);
+				try {
+					const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
+					const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as ModelDataManifest;
+					stableTs = stableGeneratedAt(newManifest, committedManifest);
+				} catch (error) {
+					// No committed manifest yet, or it is corrupt: fall back to the fresh timestamp.
+					console.warn(`generate-models: no readable committed manifest (${error instanceof Error ? error.message : String(error)}); using the fresh timestamp.`);
+				}
+			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
-				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
+				createModelDataManifest(modelDataStructure, fileContents, stableTs),
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 

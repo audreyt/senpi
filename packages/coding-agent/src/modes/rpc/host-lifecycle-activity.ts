@@ -17,6 +17,8 @@ export interface SupervisorActivityOptions {
 	readonly idleExitMs: number;
 	readonly internalSocket: string;
 	readonly internalSecret?: Buffer;
+	/** This generation: a client running in its own host is a dependent, never occupancy (#3272). */
+	readonly instanceId: string;
 	/** The supervisor is leaving: the observer stops reconnecting. */
 	readonly settled: () => boolean;
 	/** Resets owner grace even for activity that starts and ends between lifecycle ticks. */
@@ -37,7 +39,7 @@ export class SupervisorActivity {
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
 		this.decider = new IdleExitDecider(options.idleExitMs);
-		this.clients = new ClientOccupancy(() => this.refresh());
+		this.clients = new ClientOccupancy(() => this.refresh(), options.instanceId);
 		this.observerLink = createObserverLink({
 			open: () => this.connectObserver(),
 			settled: options.settled,

@@ -24,6 +24,12 @@ export interface HostCoreHooks {
 	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
 	/** Called with the in-process registry's session count after every open and close. */
 	readonly onSessionCountChange?: (size: number) => void;
+	/**
+	 * Gate on the handover-parked reopen watch: returns false once this host is draining, so a
+	 * predecessor never reopens into its own registry a session it just parked for its successor
+	 * (senpi#3282). When omitted the watch always reopens.
+	 */
+	readonly shouldReopenParked?: () => boolean;
 }
 
 export class HostCoreGate {

@@ -43,7 +43,12 @@ function credentialWith(
 }
 
 const fresh = { access: "new-access", refresh: "new-refresh", expires: Date.now() + 3_600_000 };
-const blockedDefault = slot({ name: "default", blockReason: "auth_error", expires: Date.now() - 1_000 });
+const blockedDefault = slot({
+	name: "default",
+	blockReason: "auth_error",
+	blockedUntil: Date.now() + 60_000,
+	expires: Date.now() - 1_000,
+});
 
 describe("re-login refreshes the dead slot instead of appending (omo#7084)", () => {
 	it("a single auth_error-blocked slot is refreshed in place and selectable again", async () => {

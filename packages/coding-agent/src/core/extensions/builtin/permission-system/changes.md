@@ -1,5 +1,167 @@
 # Permission System Builtin Extension
 
+## 2026-10-16 - A wider "Allow always" for tools without a parser (senpi#3403)
+
+### What changed
+
+- `always-scope.ts` (new): `widerAlwaysScope(toolName, argKey, arg)` returns the extra option a prompt may offer when the request came from the fallback parser (a tool with no parser of its own):
+  - a URL argument gets its DOMAIN, "Allow <tool> on <host> always in this project". The grant is ONE literal, `origin=<canonical origin>`, matched by equality. `canonicalUrlOrigin` gives the scheme, the parser's lowercased punycode host, and the port only when it is not the default; no userinfo. A domain origin is given only for raw text every parser reads as the same host: a strict `http(s)://<ASCII DNS host>[:port]` prefix followed by `/`, `?`, `#` or the end; no backslash, `@`, `%`, whitespace or control character anywhere; no IPv6 literal, trailing dot or non-ASCII host; and the same host and port as `new URL()`. Anything else gets no alias and no domain option, so it asks. #3416 review: `https://*/a` became `https://*` and allowed any site; `https://example.invalid\@evil.test/` is example.invalid to WHATWG and evil.test to curl and Python. A parser-less tool parses the URL itself, so the permission layer cannot make it reuse one parse.
+  - a free `input`/`pattern` argument gets the tool, "Allow <tool> always in this project", with pattern `*`;
+  - a command or a path gets nothing wider, and built-in tools never do.
+- `parsers.ts`: the fallback records which argument it used and attaches `widerAlways`. A URL request is decided against `[raw URL, origin=<canonical origin>]` (`ruleAliases`), so the grant applies to every spelling of the origin, and a rule on the raw URL (a deny included) still matches it.
+- `prompt.ts`: the option appears after "Allow always" and replies `always` with the wider patterns.
+- `service.ts` and `index.ts`: the reply's patterns become the session's approvals and are persisted to the agent-dir store, so other open sessions of the project stop asking too.
+
+### Why
+
+"Allow always" stored only the exact argument, so a browser or MCP tool asked again for the next URL or input (sisyphuslabs/omo-desktop-app#2465). A tool-wide allow for a browser would mean "go anywhere", so URLs are scoped to their domain.
+
+### Why an extension could not handle it
+
+The prompt, its options and the stored approvals belong to this builtin's decision path; another extension cannot add an option to a permission prompt or write this store.
+
+### Expected merge conflict zones
+
+`prompt.ts` (the option list and reply mapping), `parsers.ts` (`fallbackPermissionRequestFor`), `types.ts` (`Request`, `ReplyInput`).
+
+### Must not break
+
+`test/permission/tool-scope-allow-always.test.ts`:
+- the same domain stops asking; a look-alike, `@` or port variant asks again;
+- a second open session stops asking;
+- a free-input tool is allowed tool-wide;
+- a command-shaped tool gets no wider option;
+- `*`, `?` and `[` hosts get no domain option;
+- uppercase, `:443`, userinfo and IDN spellings match the grant, while another port or a host named only in the path does not.
+
+## 2026-10-16 - The legacy approvals import keeps pre-store answers (#3301 review round 2)
+
+### What changed
+
+- `storage.ts`:
+  - `readRules(path, requireSource)`: the one-time import of `<cwd>/.senpi/permissions-approved.jsonl` still requires an allow, a concrete permission and a well-formed pattern, but not the `source` marker. Store reads keep requiring the marker.
+  - A failed import removes the partial store and marker, so the next load retries.
+  - The legacy file is deleted only when every line was imported; a file with a refused line stays on disk (the marker keeps it from being read again).
+  - The comments no longer call the marker a security boundary.
+- `service.ts`:
+  - `canonicalForCompare` resolves a path that does not exist yet through its nearest EXISTING ancestor's real path at any depth, plus the missing tail, so the agent cannot create the store (or its directories) before the first answer is written (round-3 LOW: one level up missed a store whose directories were absent).
+  - The user-rule filter is computed once.
+
+### Why
+
+senpi never wrote a `source` field before the store moved. Requiring it made the import keep nothing, write an empty store and delete the legacy file, silently losing every saved "Always" answer.
+
+### Must not break
+
+`test/permission/approved-store-security.test.ts`:
+- "migrates a pre-PR approval line, which never carried a source marker, and keeps it working";
+- "never deletes a legacy file it did not fully import";
+- "refuses a write to the store even when its directories do not exist yet";
+- the forgery case drops only the wildcard permission and non-allow lines;
+- the forgery test file's symlink and post-migration-plant cases.
+
+## 2026-10-15 - A named deny keeps the model's do-not-retry sentence (#3301)
+
+### What changed
+
+- `index.ts` `denyReason`: the refusal that names the settings rule now starts with the DeniedError's own sentence ("The user has specified a rule which prevents you from using this specific tool call.") and then names the rule and its layer. Replacing that sentence dropped the model's cue not to retry the call.
+- Tests updated to this PR's rules:
+  - `final-qa` S3/S4/S7 and `codemode-bridge` name a prompting preset, because the full-access default never prompts;
+  - S3 reads the agent-dir approved store;
+  - the P0 host writes global settings into the session's own agent dir.
+- `rpc-host-handover-permission-preset.test.ts`:
+  - `probeTurn` drops replayed records, so its loops can no longer spin and OOM;
+  - prompt answers carry `sessionId`;
+  - `open_session` retries the documented `session_path_in_use` while a predecessor parks;
+  - the fake model decides on the latest message only (the senpi#3363 false alarm).
+
+### Must not break
+
+`issue-2513-bundled-read-permissions` and `final-qa` S2 assert the do-not-retry sentence; `deny-reason-precedence` asserts the named rule.
+
+## 2026-10-15 - The enforced preset is readable per session (#3301)
+
+### What changed
+
+- `preset-registry.ts`: a `WeakMap` keyed by `sessionManager`, like the dispatch authorizers. `registerPermissionPresetReader` returns a retire function that never removes a newer load's reader.
+- `index.ts`: `session_start` registers the reader before loading the rules, so a failed load reports `undefined` instead of an older load's preset. The reader runs `followPresetFlag(ctx.cwd, ctx.agentDir)` first, then returns `activePreset` unless `setupError` is set. `session_shutdown` retires it.
+
+### Must not break
+
+`test/suite/regressions/issue-2465-get-permission-preset.test.ts`:
+- settings-only Full access and the no-flag default both read `full-access`;
+- a setting's stricter preset is read as that preset;
+- a live flag change is followed;
+- a failed setup reads `undefined`, and so does a session without the permission system.
+
+## 2026-10-14 - Unregistered-tool deny never masked; configured deny beats a preset wildcard (#3301 review)
+
+### What changed
+
+- `parsers.ts`: the unknown-tool fallback collapsed to a bare `"*"` target, so a pattern-specific configured deny (e.g. `my_tool: {"rm *": deny}`) could not match an unregistered tool and the decision widened to the preset. The fallback now derives the decision target from the tool's meaningful arg (path/command/url/input), keeping `"*"` only for a truly arg-less call.
+- `service.ts` (plain path): a preset's wildcard-ask (e.g. a CLI `ask` preset, merged after project rules) masked an explicit settings/CLI deny in last-match order. The user's configured (non-preset) rules are now evaluated with their own last-match order first; a user deny wins outright, and the preset only fills the gap the user left. The presetBound path already applied this split.
+
+### Why
+
+- An unregistered (custom/MCP) tool whose deny named a pattern was not denied at all — the call executed under the preset's wildcard, the same fail-open class as the forged-approval finding.
+- A CLI `ask` preset's wildcard, landing after a project deny, made the decision `ask` instead of `deny`, so a configured deny was prompted instead of refused.
+
+### Why an extension could not handle it
+
+- Both live in the parser registry's fallback and the service's single decision point; an extension cannot intercept either.
+
+### Expected merge conflict zones
+
+- `parsers.ts` `fallbackPermissionRequestFor` / the registry's no-parser branch; `service.ts` the plain-path user-rule split in `dispatchDecision`.
+
+## 2026-10-14 - Approvals-store security hardening (#3301 review / #2465)
+
+### What changed
+
+- `storage.ts`: the approved store moved out of the workspace to `<agentDir>/permissions/approved/<project-hash>.jsonl`, keyed by the project's real path, so an agent can no longer write `<cwd>/.senpi/permissions-approved.jsonl` and have it honored in the same session. Loaded lines are validated (action `allow` only, a concrete non-wildcard permission, a well-formed pattern, and a `user-answer` source marker only the answer path writes); anything else is dropped. The legacy in-workspace file is imported once, validated, then removed — a line planted there later is never honored. Reads and appends never follow a symlink at the store path.
+- `service.ts`: `dispatchDecision` evaluates the configured ruleset alone first; a configured (global/project/CLI) deny outranks any approval in both the plain and presetBound paths, so an approved `allow` can only turn a configured ask into an allow, never a deny. A defence-in-depth deny on the store's real path (case-folded on macOS) keeps the agent's own tools from touching it whatever the rules say. The session-owned approved suffix is exposed by identity (`getSessionApproved`), not by a load-time index.
+- `index.ts`: a failed `persistAlways` write is caught and logged (the tool call proceeds) and the shutdown append retries it; the shutdown append uses `getSessionApproved` so a concurrent session's append is not duplicated and a deleted store does not resurrect or drop this session's answers. `denyReason`/`findDenyProvenance` now name the rule that actually decided, using the same global→project→CLI last-match precedence as the decision and all of the request's patterns, and only promise "edit that entry to allow" when no other layer still denies.
+- `settings.ts`: approvals load from the agent-dir store.
+
+### Why
+
+- A model or prompt injection could previously write a forged `{"permission":"*","pattern":"*","action":"allow"}` line into the in-workspace store and have it honored on the very next call, mid-session — a same-session privilege escalation.
+- An approved `allow` could override a configured settings `deny`, live, disabling a user policy such as `bash: {"rm -rf *": deny}`.
+- Index-based shutdown bookkeeping duplicated or dropped approvals once the store refreshed; a failed write aborted an already-answered tool call.
+- The refusal named the first matching layer, not the layer that actually decided, and could tell the user to edit an entry whose removal would not unblock the call.
+
+### Why an extension could not handle it
+
+- The store location, line validation, decision precedence, and shutdown persistence all live in the permission service's single decision point and its storage contract; an extension outside `permission-system` cannot intercept them.
+
+### Expected merge conflict zones
+
+- `storage.ts` store path / validation / migration; `service.ts` `dispatchDecision` precedence and `getSessionApproved`; `index.ts` `denyReason`/`findDenyProvenance` and the shutdown append; `settings.ts` `loadApproved` call.
+
+## 2026-10-14 - Full-access central decision + cross-session approvals (#2465)
+
+### What changed
+
+- `service.ts`: `dispatchDecision` now applies the dedicated full-access decision — when the active preset is `full-access`, an `ask` result collapses to `allow` while a `deny` stays denied — so a settings/CLI `ask` rule can never re-introduce a prompt under Full access. The service takes the active preset at construction for this.
+- `service.ts`: the approved store is re-read per decision when its mtime+size changed (`refreshApproved`), replacing only the persisted prefix and keeping this session's own answers, so an "Always" answer one open session writes takes effect on another open session's next decision.
+- `storage.ts`: adds `approvedFileVersion` (mtime+size) for the cheap change check behind that re-read.
+- `index.ts`: passes the active preset and the session cwd into the service; persists each "Always" answer at answer time (`persistAlways`) instead of only at session shutdown, and the shutdown append skips rules already persisted so the JSONL contract keeps one line per rule.
+- `index.ts`: permission loading now uses the session's own `agentDir` (`ctx.agentDir`) at `session_start` and on every `followPresetFlag` reload, so global settings a host session actually runs with are honored; a denial's block reason names the matching rule and its layer (global/project/CLI) via `denyReason`.
+- `settings.ts`: no longer re-appends the CLI `full-access` preset's wildcard allow (redundant with the default), which had masked a user's explicit settings deny.
+
+### Why
+
+- Under Full access nothing may prompt, and a mode change must apply immediately to running and idle sessions; a settings `ask` rule was silently prompting, and a settings `deny` was silently allowed.
+- An "Always allow" answer must reach other open sessions of the same project at once, not only after their next session start.
+
+### Why an extension could not handle it
+
+- The decision lives in the permission service's single decision point and the approved store's read path; an extension outside `permission-system` cannot intercept either without replacing the evaluator and storage contract.
+
+### Expected merge conflict zones
+
+- `service.ts` `dispatchDecision` / `refreshApproved` and the constructor signature; `index.ts` `authorizeToolCall` block reasons, `loadPermissionRules` signature, and the shutdown append; `settings.ts` `loadPermissionSettings` merge order; `storage.ts` approved-store helpers.
+
 ## 2026-10-06 - Invocation-scoped dispatch authorization (#2843)
 
 ### What changed

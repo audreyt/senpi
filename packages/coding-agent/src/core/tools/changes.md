@@ -801,3 +801,21 @@ The edit card header is produced inside the built-in edit renderer, below the ex
 ### Expected merge conflict zones
 
 Upstream edits to `renderToolDiff`/`renderers/edit.ts` at the next sync.
+
+## 2026-10-14 - Eval-only glob tool registered with the builtins (#3330)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/index.ts`: adds `glob` to `ToolName`, `allToolNames`, `ToolsOptions` and `createAllToolDefinitions`, and re-exports `createGlobTool` / `createGlobToolDefinition` from the fork-only `glob.ts`, which reuses the find search with `exposure: "eval"`.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/index.ts`: models inside eval reach for `tool.glob`; it has to exist as a builtin that is only callable inside eval (senpi#3330).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/index.ts`: the builtin tool set and its option types are assembled in this module.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/index.ts`: the `ToolName` union, `allToolNames`, `ToolsOptions`, and `createAllToolDefinitions` at the next upstream sync.

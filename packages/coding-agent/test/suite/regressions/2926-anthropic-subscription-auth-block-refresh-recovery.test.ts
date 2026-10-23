@@ -68,6 +68,7 @@ async function blockedLane(slot: Partial<AccountSlot>, sibling?: AccountSlot): P
 			expires: NOW - MINUTE,
 			source: "login",
 			blockReason: "auth_error",
+			blockedUntil: NOW + MINUTE,
 			...slot,
 		});
 		return sibling ? addAccount(blocked, sibling) : blocked;
@@ -154,6 +155,7 @@ describe("senpi#2926 an auth-blocked slot whose saved grant still refreshes", ()
 		expect(lane.spawned).toEqual([]);
 		expect(await storedSlot(lane.store)).toMatchObject({
 			blockReason: "auth_error",
+			blockedUntil: NOW + MINUTE,
 			refresh: "refresh-1",
 			authRecoveryGrant: authGrantDigest("refresh-1"),
 		});
@@ -202,6 +204,29 @@ describe("senpi#2926 an auth-blocked slot whose saved grant still refreshes", ()
 		]);
 	});
 
+	it("refreshes a blocked slot whose re-probe is due before anything probes it (senpi#3264)", async () => {
+		// given the block's re-probe time passed while a sibling can still serve
+		const lane = await blockedLane(
+			{ blockedUntil: NOW - 1 },
+			{
+				name: "spare",
+				access: "access-spare",
+				refresh: "refresh-spare",
+				expires: NOW + 60 * MINUTE,
+				source: "login",
+			},
+		);
+
+		// when a request arrives
+		await streamAnthropicSubscription(model, context).result();
+
+		// then the grant is redeemed first, so no probe ever re-sends the rejected token
+		expect(lane.refreshes).toEqual(["refresh-1"]);
+		expect(lane.spawned.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).not.toContain("access-1");
+		expect(await storedSlot(lane.store)).toMatchObject({ access: "access-2", refresh: "refresh-2" });
+		expect((await storedSlot(lane.store))?.blockReason).toBeUndefined();
+	});
+
 	it("clears the recovery marker on a re-login", () => {
 		// given a slot that already used its one recovery
 		const credential = addAccount(emptyCredential(), {
@@ -211,6 +236,7 @@ describe("senpi#2926 an auth-blocked slot whose saved grant still refreshes", ()
 			expires: NOW,
 			source: "login",
 			blockReason: "auth_error",
+			blockedUntil: NOW + MINUTE,
 			authRecoveryGrant: authGrantDigest("refresh-1"),
 		});
 

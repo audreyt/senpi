@@ -12,9 +12,8 @@ const MAX_HTML_CHARACTERS = 512_000;
 
 const Params = Type.Object({
 	html: Type.String({
-		description: "A complete, self-contained HTML document.",
+		description: `A complete, self-contained HTML document, at most ${MAX_HTML_CHARACTERS} characters. Pass screenshots and other images as absolute file paths (<img src="/abs/path.png">), never as base64.`,
 		minLength: 1,
-		maxLength: MAX_HTML_CHARACTERS,
 	}),
 	title: Type.String({ description: "Short name for the page.", minLength: 1, maxLength: 200 }),
 	height: Type.Optional(
@@ -25,6 +24,26 @@ const Params = Type.Object({
 });
 
 const OUTPUT_DIR = ".senpi/html-pages";
+
+const BASE64_IMAGE = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi;
+
+/**
+ * The limit is checked here rather than in the schema so the refusal says what to do: a report
+ * usually goes over it because its screenshots are base64, and the fix is to pass them as absolute
+ * file paths, which this tool inlines itself after the check (senpi#3418).
+ */
+function assertWithinInputLimit(html: string): void {
+	if (html.length <= MAX_HTML_CHARACTERS) return;
+	const images = html.match(BASE64_IMAGE) ?? [];
+	const imageCharacters = images.reduce((total, image) => total + image.length, 0);
+	const advice =
+		images.length > 0
+			? ` ${images.length} base64 images make up ${imageCharacters} of them. Save each image to a file and reference it by absolute file path (<img src="/abs/path/shot.png">); show_html_page inlines local images itself, and they do not count against this limit.`
+			: " Shorten the document, or move large images out of it as absolute file paths, which show_html_page inlines itself.";
+	throw new Error(
+		`The page is ${html.length} characters; show_html_page accepts at most ${MAX_HTML_CHARACTERS} characters.${advice}`,
+	);
+}
 
 export interface ShowHtmlPageDetails {
 	path: string;
@@ -56,9 +75,11 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	promptGuidelines: [
 		"No network: inline every script, style and image (data: URIs); a CDN <script src> or remote font is refused and leaves the page blank.",
 		"Absolute-path local images are inlined after a magic-byte check; a renamed non-image is refused.",
+		"Pass screenshots and other images as absolute file paths, never as base64 data: URIs: the page is limited to 512000 characters before images are inlined.",
 	],
 	parameters: Params,
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+		assertWithinInputLimit(params.html);
 		const inlined = await inlineLocalImages(params.html);
 		const prepared = injectHtmlRenderBootstrap(inlined.html);
 		const height = clampHeight(params.height);

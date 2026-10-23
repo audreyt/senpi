@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
@@ -42,9 +43,13 @@ export class SessionWorkerClient {
 		isBunBinary
 			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		this.webviewBroker
-			? { workerData: { webviewBroker: this.webviewBroker.port }, transferList: [this.webviewBroker.port] }
-			: {},
+		{
+			workerData: {
+				hostProcessStartedAtMs: ownProcessStartedAtMs(),
+				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
+			},
+			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
+		},
 	);
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
@@ -270,6 +275,18 @@ export class SessionWorkerClient {
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
+			case "loaded_surfaces": {
+				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer || !sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				writer.publishLoadedSurfacesChanged(sessionId, message.previous, message.digest);
+				acknowledge(message.signal, true);
+				return;
+			}
 			case "request_close":
 				this.requestClose?.();
 				return;

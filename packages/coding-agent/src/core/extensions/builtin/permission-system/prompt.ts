@@ -11,7 +11,8 @@ export async function showPermissionPrompt(
 
 	const displayTitle = `${title}\n\n${message}`;
 
-	const options = ["Allow once", "Allow always", "Deny", "Deny with feedback"];
+	const wider = request.widerAlways;
+	const options = ["Allow once", "Allow always", ...(wider ? [wider.label] : []), "Deny", "Deny with feedback"];
 
 	// Clients bind the dialog to the call it approves by this id; with several calls of one tool in
 	// flight (the engine prepares a message's calls before running them), nothing else says which.
@@ -31,6 +32,10 @@ export async function showPermissionPrompt(
 			reply: "reject",
 			message: feedback || undefined,
 		};
+	}
+
+	if (wider !== undefined && choice === wider.label) {
+		return { requestID: request.id, reply: "always", always: [...wider.patterns] };
 	}
 
 	const replyMap: Record<string, Reply> = {

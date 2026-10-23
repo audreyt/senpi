@@ -321,8 +321,8 @@ export function markTainted(senpiSessionId: string, reason: string): void {
 	annotateTainted(sessionRegistry, senpiSessionId, reason);
 }
 
-export async function switchSessionModel(senpiSessionId: string, modelId: string): Promise<boolean> {
-	return switchEntryModel(sessionRegistry, senpiSessionId, modelId);
+export async function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): Promise<boolean> {
+	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 
 export function recordPendingFork(senpiSessionId: string, reason: string): void {

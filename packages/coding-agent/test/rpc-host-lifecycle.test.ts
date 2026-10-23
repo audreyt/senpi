@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
 import { STOP_WAIT_BUDGET_MS } from "../src/modes/rpc/host-ensure-stop.ts";
@@ -37,6 +36,7 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
 
@@ -48,6 +48,9 @@ const collisionChildFixture = join(import.meta.dirname, "fixtures", "rpc-collisi
 // Windows supervisor-exit observation is load-dependent; teardown is eventually
 // consistent within the watchdog fallback bound, so the affected waits allow 30s.
 const WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS = 30_000;
+// A clock test waits on events only. Its single bound must cover a cold supervisor start, which the
+// supervisor itself caps at 30 s for its host child (`waitForListener`), plus the clock steps.
+const CLOCK_TEST_TIMEOUT_MS = 60_000;
 
 afterEach(
 	async () => {
@@ -159,99 +162,97 @@ describe("idle exit decision core", () => {
 
 describe("ensureHost-spawned host lifecycle", () => {
 	// #1290: an ensure readiness connection can fit entirely between idle ticks.
-	it("resets the idle window for a connection entirely between timer ticks", async () => {
-		const qa = scratch("clock");
-		const supervisor = spawn(
-			process.execPath,
-			["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
-			{
-				env: {
-					...process.env,
-					...hermeticProviderEnv(),
-					SENPI_CODING_AGENT_DIR: qa.agentDir,
-					SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
-					[HOST_IDLE_EXIT_MS_ENV]: "800",
-				},
-				stdio: ["ignore", "ignore", "pipe", "ipc"],
-			},
-		);
-		const exited = once(supervisor, "exit", { signal: AbortSignal.timeout(30_000) });
-		try {
-			await supervisorMessage(supervisor, "ready");
-			await advanceSupervisorClock(supervisor, 0, true);
-			await advanceSupervisorClock(supervisor, 799, false);
-			const peer = await JsonlPeer.connect(qa.socket);
-			await peer.request({ id: "readiness", type: "get_protocol_info" });
-			const detached = supervisorMessage(supervisor, "detached");
-			peer.destroy();
-			await detached;
-			const result = await advanceSupervisorClock(supervisor, 800, true);
-			expect(result).toMatchObject({ shuttingDown: false });
-			// Reconnect through the real public endpoint, not a process-liveness probe.
-			const next = await JsonlPeer.connect(qa.socket);
-			expect(await next.request({ id: "next", type: "get_protocol_info" })).toMatchObject({ success: true });
-			const nextDetached = supervisorMessage(supervisor, "detached");
-			next.destroy();
-			await nextDetached;
-			expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: false });
-			expect(await advanceSupervisorClock(supervisor, 1_600, true)).toMatchObject({ shuttingDown: true });
-			expect(await exited).toEqual([0, null]);
-		} finally {
-			supervisor.kill();
-			await exited;
-		}
-	}, 45_000);
+	it(
+		"resets the idle window for a connection entirely between timer ticks",
+		async () => {
+			const qa = scratch("clock");
+			const { supervisor, exited } = clockSupervisor(qa);
+			try {
+				await supervisorMessage(supervisor, "ready");
+				await advanceSupervisorClock(supervisor, 0, true);
+				await advanceSupervisorClock(supervisor, 799, false);
+				const peer = await JsonlPeer.connect(qa.socket);
+				await peer.request({ id: "readiness", type: "get_protocol_info" });
+				const detached = supervisorMessage(supervisor, "detached");
+				peer.destroy();
+				await detached;
+				const result = await advanceSupervisorClock(supervisor, 800, true);
+				expect(result).toMatchObject({ shuttingDown: false });
+				// Reconnect through the real public endpoint, not a process-liveness probe.
+				const next = await JsonlPeer.connect(qa.socket);
+				expect(await next.request({ id: "next", type: "get_protocol_info" })).toMatchObject({ success: true });
+				const nextDetached = supervisorMessage(supervisor, "detached");
+				next.destroy();
+				await nextDetached;
+				expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: false });
+				expect(await advanceSupervisorClock(supervisor, 1_600, true)).toMatchObject({ shuttingDown: true });
+				expect(await exited).toEqual([0, null]);
+			} finally {
+				supervisor.kill();
+				await exited;
+			}
+		},
+		CLOCK_TEST_TIMEOUT_MS,
+	);
 
 	// A status poller must not keep every host it looks at alive (senpi#2245 review M1).
-	it("keeps the idle window running across observing status reads", async () => {
-		const qa = scratch("observe");
-		const { supervisor, exited } = clockSupervisor(qa);
-		try {
-			await supervisorMessage(supervisor, "ready");
-			await advanceSupervisorClock(supervisor, 0, true);
-			await advanceSupervisorClock(supervisor, 799, false);
-			const peer = await JsonlPeer.connect(qa.socket);
-			expect(await peer.request({ id: "info", type: "get_protocol_info", observe: true })).toMatchObject({
-				success: true,
-			});
-			expect(await peer.request({ id: "list", type: "list_sessions", observe: true })).toMatchObject({
-				success: true,
-			});
-			const detached = supervisorMessage(supervisor, "detached");
-			peer.destroy();
-			await detached;
-			expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: true });
-			expect(await exited).toEqual([0, null]);
-		} finally {
-			supervisor.kill();
-			await exited;
-		}
-	}, 45_000);
+	it(
+		"keeps the idle window running across observing status reads",
+		async () => {
+			const qa = scratch("observe");
+			const { supervisor, exited } = clockSupervisor(qa);
+			try {
+				await supervisorMessage(supervisor, "ready");
+				await advanceSupervisorClock(supervisor, 0, true);
+				await advanceSupervisorClock(supervisor, 799, false);
+				const peer = await JsonlPeer.connect(qa.socket);
+				expect(await peer.request({ id: "info", type: "get_protocol_info", observe: true })).toMatchObject({
+					success: true,
+				});
+				expect(await peer.request({ id: "list", type: "list_sessions", observe: true })).toMatchObject({
+					success: true,
+				});
+				const detached = supervisorMessage(supervisor, "detached");
+				peer.destroy();
+				await detached;
+				expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: true });
+				expect(await exited).toEqual([0, null]);
+			} finally {
+				supervisor.kill();
+				await exited;
+			}
+		},
+		CLOCK_TEST_TIMEOUT_MS,
+	);
 
-	it("attaches a connection from its first request that is not an observing read", async () => {
-		const qa = scratch("obsattach");
-		const { supervisor, exited } = clockSupervisor(qa);
-		try {
-			await supervisorMessage(supervisor, "ready");
-			await advanceSupervisorClock(supervisor, 0, true);
-			await advanceSupervisorClock(supervisor, 799, false);
-			const peer = await JsonlPeer.connect(qa.socket);
-			await peer.request({ id: "info", type: "get_protocol_info", observe: true });
-			// `observe` on anything but a read does not make it one.
-			await peer.request({ id: "commands", type: "get_commands", observe: true });
-			const detached = supervisorMessage(supervisor, "detached");
-			peer.destroy();
-			await detached;
-			// The attachment restarted the window when it detached, at 799.
-			expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: false });
-			expect(await advanceSupervisorClock(supervisor, 1_598, true)).toMatchObject({ shuttingDown: false });
-			expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: true });
-			expect(await exited).toEqual([0, null]);
-		} finally {
-			supervisor.kill();
-			await exited;
-		}
-	}, 45_000);
+	it(
+		"attaches a connection from its first request that is not an observing read",
+		async () => {
+			const qa = scratch("obsattach");
+			const { supervisor, exited } = clockSupervisor(qa);
+			try {
+				await supervisorMessage(supervisor, "ready");
+				await advanceSupervisorClock(supervisor, 0, true);
+				await advanceSupervisorClock(supervisor, 799, false);
+				const peer = await JsonlPeer.connect(qa.socket);
+				await peer.request({ id: "info", type: "get_protocol_info", observe: true });
+				// `observe` on anything but a read does not make it one.
+				await peer.request({ id: "commands", type: "get_commands", observe: true });
+				const detached = supervisorMessage(supervisor, "detached");
+				peer.destroy();
+				await detached;
+				// The attachment restarted the window when it detached, at 799.
+				expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: false });
+				expect(await advanceSupervisorClock(supervisor, 1_598, true)).toMatchObject({ shuttingDown: false });
+				expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: true });
+				expect(await exited).toEqual([0, null]);
+			} finally {
+				supervisor.kill();
+				await exited;
+			}
+		},
+		CLOCK_TEST_TIMEOUT_MS,
+	);
 
 	it("exits cleanly after the idle window with no connections and no active turns", async () => {
 		const qa = scratch("idle");
@@ -584,12 +585,42 @@ describe("resolveHostChildLaunch", () => {
 	});
 });
 
+/**
+ * The next `type` message from a clock supervisor, or the supervisor's exit. There is no wall-clock
+ * cap here: a fixed 30 s timer raced the supervisor's cold start (the first spawn in the file pays
+ * the tsx transform) and lost on loaded Windows runners (#2448). A startup that cannot finish ends
+ * in the supervisor's own exit, which rejects with its stderr; the test timeout bounds the rest.
+ */
 async function supervisorMessage(supervisor: ChildProcess, type: string): Promise<RecordValue> {
-	for await (const values of on(supervisor, "message", { signal: AbortSignal.timeout(30_000) })) {
-		const message: unknown = values[0];
-		if (typeof message === "object" && message !== null && "type" in message && message.type === type) return message;
+	if (supervisor.exitCode !== null || supervisor.signalCode !== null) throw supervisorGone(supervisor, type);
+	const stop = new AbortController();
+	const message = (async () => {
+		for await (const values of on(supervisor, "message", { signal: stop.signal })) {
+			const value: unknown = values[0];
+			if (typeof value === "object" && value !== null && "type" in value && value.type === type) return value;
+		}
+		throw new Error(`supervisor closed before ${type}`);
+	})();
+	const exited = once(supervisor, "exit", { signal: stop.signal }).then(() =>
+		Promise.reject(supervisorGone(supervisor, type)),
+	);
+	// Whichever loses is aborted below; its rejection is expected and must not surface as unhandled.
+	message.catch(() => undefined);
+	exited.catch(() => undefined);
+	try {
+		return await Promise.race([message, exited]);
+	} finally {
+		stop.abort();
 	}
-	throw new Error(`supervisor closed before ${type}`);
+}
+
+const supervisorStderr = new WeakMap<ChildProcess, string[]>();
+
+function supervisorGone(supervisor: ChildProcess, type: string): Error {
+	const stderr = (supervisorStderr.get(supervisor) ?? []).join("");
+	return new Error(
+		`supervisor exited (code ${String(supervisor.exitCode)}, signal ${String(supervisor.signalCode)}) before ${type}\n${stderr}`,
+	);
 }
 
 /** The real supervisor on a test-driven clock (`fixtures/rpc-lifecycle-clock.ts`), idle window 800 ms. */
@@ -608,7 +639,11 @@ function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promi
 			stdio: ["ignore", "ignore", "pipe", "ipc"],
 		},
 	);
-	return { supervisor, exited: once(supervisor, "exit", { signal: AbortSignal.timeout(30_000) }) };
+	const stderr: string[] = [];
+	supervisorStderr.set(supervisor, stderr);
+	supervisor.stderr?.setEncoding("utf8").on("data", (chunk: string) => stderr.push(chunk));
+	// Registered at spawn so an early exit is never missed; bounded by the test timeout, not a timer.
+	return { supervisor, exited: once(supervisor, "exit") };
 }
 
 function advanceSupervisorClock(supervisor: ChildProcess, now: number, tick: boolean): Promise<RecordValue> {

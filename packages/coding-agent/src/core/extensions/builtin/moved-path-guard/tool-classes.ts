@@ -20,6 +20,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	write: { kind: "filesystem-policy" },
 	edit: { kind: "filesystem-policy" },
 	find: { kind: "filesystem-policy" },
+	glob: { kind: "filesystem-policy" },
 	ls: { kind: "filesystem-policy" },
 	grep: { kind: "filesystem-policy" },
 	apply_patch: { kind: "patch" },

@@ -46,7 +46,9 @@ jobs:
         run: bun ../prebuild-install/bin.js -r napi
       - name: Check and build source
         run: |
-          bunx --bun --no-install tsc --noEmit
+          # Bun can link the transitive @typescript/old tsc over TypeScript 7's
+          # native launcher. Select the pinned compiler, not the ambiguous bin.
+          node node_modules/typescript/bin/tsc --noEmit
           bun run build:bun
           bun scripts/prepare-bun-compile-assets.mjs
       - name: Compile the read surface

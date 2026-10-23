@@ -3,6 +3,7 @@ import {
 	buildProviderDiagnostic,
 	categoryForProviderCode,
 	categoryForProviderStatus,
+	categoryForTransportCode,
 	isProviderCodeStatusCompatible,
 	isProviderDiagnosticCategory,
 	isProviderDiagnosticStatus,
@@ -17,10 +18,11 @@ export type ProviderDiagnosticCategory =
 	| "context_limit"
 	| "invalid_request"
 	| "provider_unavailable"
+	| "network"
 	| "unknown";
 
 /** Which structured provider field decided the category. */
-export type ProviderDiagnosticEvidence = "structured_status" | "structured_code";
+export type ProviderDiagnosticEvidence = "structured_status" | "structured_code" | "structured_transport";
 
 /**
  * Bounded, redaction-safe classification of a provider rejection, minted only by
@@ -61,6 +63,11 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 			if (code !== undefined || !isProviderDiagnosticStatus(httpStatus)) return undefined;
 			if (category !== categoryForProviderStatus(httpStatus)) return undefined;
 			return buildProviderDiagnostic({ category, httpStatus, evidence });
+		}
+		if (evidence === "structured_transport") {
+			if (httpStatus !== undefined || typeof code !== "string") return undefined;
+			if (categoryForTransportCode(code) !== category) return undefined;
+			return buildProviderDiagnostic({ category, code, evidence });
 		}
 		if (evidence !== "structured_code" || typeof code !== "string") return undefined;
 		if (categoryForProviderCode(code) !== category) return undefined;

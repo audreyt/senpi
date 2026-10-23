@@ -3,6 +3,7 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { restoreColdSeedCalibration } from "./cold-seed-budget.ts";
+import { sdkModelId } from "./options.ts";
 import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,
@@ -127,7 +128,7 @@ export function registerSessionRegistry(
 			keepBindingThenClose(sessionId, "model_selected");
 			return;
 		}
-		if (!(await switchSessionModel(sessionId, event.model.id))) {
+		if (!(await switchSessionModel(sessionId, event.model.id, sdkModelId(event.model)))) {
 			keepBindingThenClose(sessionId, "model_selected");
 		}
 	});

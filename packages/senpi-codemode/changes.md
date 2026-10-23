@@ -1,5 +1,52 @@
 # senpi-codemode fork changes
 
+## 2026-10-15 - Write Julia startup frames pre-encoded (Fixes senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: the host-init status and ready frames are constant strings written through `senpi_emit_line`, the same locked println and flush path `senpi_emit` now uses for encoded frames. Frame bytes, order and flush points are unchanged.
+- `packages/senpi-codemode/test/kernels/jl/startup-frames.test.ts` and `test/gate/allowlist.json`: a real-Julia interrupt contract reads the encoder's recorded specializations in the first and in the replacement interpreter and requires none before the first cell, while all three startup stages still reach the host for both interpreters.
+
+### Why
+
+- Every fresh or replacement interpreter ran the generic frame encoder at host-init on a nested heterogeneous dictionary, which interpreted 8 `senpi_json` and 10 `senpi_escape` calls and built 7 specializations before any cell existed. Constant frames remove that work from startup reporting; the first encode now happens with the first result, as before startup reporting existed.
+
+### Why an extension could not handle it
+
+- Startup protocol emission belongs to the embedded Julia runner before user cells execute.
+
+### Expected merge conflict zones
+
+- Julia frame emission and the init branch. The watchdog, replacement, queued-cell ownership and state-loss reporting are unchanged.
+
+## 2026-10-14 - Bound stored display jsonOutputs and render them safely (Fixes senpi#3261)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-json-size.ts`: new module owning the display JSON budget (`MAX_DISPLAY_TEXT_BYTES`, moved from `image.ts`; `MAX_DISPLAY_JSON_BYTES` aliases it so a stored entry never outweighs the text the model saw), the serialized-Buffer detection and `<Buffer N KB|MB>` placeholder, and `displayJsonSizeExceeds`, an iterative early-exit size estimate for legacy stored entries.
+- `packages/senpi-codemode/src/tool/display-json-bounds.ts`: new module with `sanitizeDisplayJson` (serialized `{type:"Buffer",data:[...]}` collapses to `<Buffer N KB|MB>`; the value is trimmed inside, never replaced: every shown key first reserves a stub value and the remaining room is shared max-min fairly, so small siblings such as `total`/`page` survive a large `rows` array; long strings, arrays and keys keep a prefix with a visible `[…Nch elided…]` / `… (N more items)` / `"…": "N more keys"` marker; keys are trimmed with escaping counted and kept unique (a uniqueness suffix stays inside the 64-char key limit); string and key sizes count each character at its real serialized length, so characters above U+FFFF cost two units and trims never split a surrogate pair; the real `JSON.stringify` length is checked last and falls back to a skeleton of every top-level key, so the entry never exceeds the budget).
+- `packages/senpi-codemode/src/tool/image.ts`: `display()` stores `sanitizeDisplayJson(value)` in `jsonOutputs` instead of the full parsed value; the model-facing text path is unchanged.
+- `packages/senpi-codemode/src/tool/render-detail.ts`: `renderJsonOutputs` renders a `<Buffer N MB>` placeholder for serialized-Buffer entries, a one-line elision summary for entries beyond the storage budget (multi-MB entries in pre-fix sessions), and a local `[display value could not be rendered]` line when an entry throws, and caps the sibling lines of a legacy entry with a nested Buffer at the expanded line cap, so one bad entry cannot stall the session render.
+- `packages/senpi-codemode/src/kernels/js/display-image.js`: a plain object whose own `buffer` field holds bytes with a PNG/JPEG/GIF/WebP signature (e.g. an omowright screenshot `{ buffer, width, height }`) resolves to an image frame plus a JSON text of the remaining metadata instead of the JSON path; BMP's two-byte signature is only trusted when the header file-size field is plausible, so BM-prefixed plain text stays JSON.
+- `packages/senpi-codemode/test/gate/allowlist.json`: register the seven additive contracts in `test/eval-display-json-bounds.test.ts` without changing the frozen compatibility baseline.
+
+### Why
+
+- `packages/senpi-codemode/src/tool/image.ts`: `#jsonOutputs.push(value)` stored the full parsed display value while only the model-facing text was capped, so one `display()` of a Buffer-wrapping object wrote a multi-MB `details.jsonOutputs` line into the session file and broke its render.
+- `packages/senpi-codemode/src/tool/render-detail.ts`: sessions recorded before the bound still carry those entries; rendering must degrade locally rather than throw across the tool component.
+- `packages/senpi-codemode/src/kernels/js/display-image.js`: the reported repro `display(shot)` intended the screenshot image, but the wrapped shape fell through to the JSON path; recognizing it is the small, clean extension of the existing raw-bytes image detection.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/tool/`: the value stored in `EvalToolDetails.jsonOutputs` and the renderer that reads it are internal to this package's eval tool pipeline.
+- `packages/senpi-codemode/src/kernels/js/display-image.js`: display-value classification happens inside the JS kernel before the bridge message exists.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/tool/image.ts`: the `display()` JSON branch around the `jsonOutputs` push.
+- `packages/senpi-codemode/src/tool/render-detail.ts`: the per-entry loop of `renderJsonOutputs`.
+- `packages/senpi-codemode/src/kernels/js/display-image.js`: the tail of `resolveDisplayOps`.
+
 ## 2026-10-12 - Prepare an eval cell without a Babel parse unless it has import syntax (Fixes senpi#3205)
 
 ### What changed

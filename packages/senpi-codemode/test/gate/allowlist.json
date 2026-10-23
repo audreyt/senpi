@@ -48,9 +48,10 @@
 				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) wraps the first completion handle without predeclared types",
 				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
 				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
-				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result"
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result",
+				"legacyContracts/test/kernels/jl/startup-frames.test.ts/Julia startup frames (Refs senpi#3048) reports every startup stage without running the frame encoder in the first or the replacement interpreter"
 			],
-			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline."
+			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline; a real-Julia interrupt contract proves pre-encoded startup frames keep the first and replacement interpreters from running the frame encoder before their first cell."
 		},
 		"senpi#3034": {
 			"additions": [
@@ -1633,6 +1634,38 @@
 				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
 			],
 			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
+		},
+		"senpi#3261": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a 100,000-character key is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key after an escaped string is kept",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key of 3,000 control characters is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a paginated response keeps its scalars after a large rows array",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji keys stay keys and a trimmed emoji string never splits a surrogate pair",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji-heavy records keep their scalars and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) kept records keep all their own fields",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) too many keys to show still stays within the budget with a visible count",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a displayed object wrapping a large Buffer when the cell settles then the stored jsonOutputs entry is bounded",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored Buffer entry when rendered then a bounded placeholder line is shown",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored entry when rendered then a bounded summary replaces the tree",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a malformed stored entry when rendered then the failure stays local to the entry",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given the real legacy shape with the Buffer nested under a key when rendered then the placeholder shows for the buffer key",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a Buffer nested under a key becomes a placeholder summary with its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a control-character string keeps its sibling keys and stays inside the budget",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a deeply nested value keeps its top-level keys with a depth marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long array of records stays a non-empty partial array with an elision marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long string under a key truncates with a marker and keeps its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a wide object keeps its leading keys with an elision marker, not a dropped value",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object holding only image bytes under buffer when displayed then just the frame resolves",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds BM-prefixed non-BMP bytes when displayed then it stays on the JSON path",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path"
+			],
+			"reason": "senpi#3261 adds contracts proving stored display jsonOutputs follow the display text budget (serialized Buffers collapse to placeholders), legacy oversized or malformed entries render a bounded local summary instead of throwing, and { buffer: <image bytes>, ...metadata } displays as an image frame plus metadata text. The frozen baseline and every existing contract remain unchanged. The review rounds add the display-json-bounds/display-json-size modules (split for size) and contracts proving every top-level key survives trimming, keys are trimmed within the budget, and characters above U+FFFF count at their serialized length. The frozen baseline and every existing contract remain unchanged."
 		}
 	}
 }

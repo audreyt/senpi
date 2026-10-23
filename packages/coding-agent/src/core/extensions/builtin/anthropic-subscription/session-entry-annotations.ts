@@ -10,10 +10,11 @@ export async function switchEntryModel(
 	registry: AnnotatableRegistry,
 	senpiSessionId: string,
 	modelId: string,
+	sdkModel: string = modelId,
 ): Promise<boolean> {
 	const entry = registry.get(senpiSessionId);
 	if (!entry?.query.setModel) return false;
-	await entry.query.setModel(modelId);
+	await entry.query.setModel(sdkModel);
 	entry.modelId = modelId;
 	registry.touch(entry);
 	return true;

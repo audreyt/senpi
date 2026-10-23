@@ -3,12 +3,14 @@ import type { RpcCommand } from "./rpc-types.ts";
 /** Whether the command itself refreshes activity, apart from attached-client keepalives. */
 const observations: ReadonlySet<string> = new Set([
 	"get_state",
+	"get_effect_status",
 	"get_messages",
 	"get_entries",
 	"get_tree",
 	"get_fork_messages",
 	"get_last_assistant_text",
 	"get_session_stats",
+	"resolve_path",
 	"get_steering_messages",
 	"get_follow_up_messages",
 	"get_available_models",

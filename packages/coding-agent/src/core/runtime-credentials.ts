@@ -27,6 +27,11 @@ export class RuntimeCredentials implements CredentialStore {
 		this.store = store;
 	}
 
+	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */
+	get backingStore(): CredentialStore {
+		return this.store;
+	}
+
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
 		asExtensionOAuthRegistry(this.store)?.registerOAuthProvider(providerId, oauth);
 	}

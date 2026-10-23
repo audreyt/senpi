@@ -17,11 +17,13 @@ import type {
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
+import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
+import { ProjectTrustStore } from "./trust-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -37,6 +39,8 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 /** Immutable flags selected when a runtime is first launched. */
 export interface AgentSessionLaunchProfile {
 	cwd: string;
+	/** Host-owned public endpoint evidence; never sourced from client session context. */
+	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
@@ -138,6 +142,7 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
 	private beforeSessionInvalidate?: () => void;
+	private readonly sessionReplaceListeners = new Set<() => void>();
 	private _session: AgentSession;
 	private _services: AgentSessionServices;
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
@@ -166,7 +171,11 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
-		this._sessionHold = holdActiveSession(_session.sessionManager, wasFlushed(_session.sessionManager));
+		this._sessionHold = holdActiveSession(
+			_session.sessionManager,
+			wasFlushed(_session.sessionManager),
+			launchProfile?.holderEndpoint,
+		);
 	}
 
 	/** Stops advertising the open session to other processes; a runtime that replaces this one holds its own. */
@@ -188,7 +197,9 @@ export class AgentSessionRuntime {
 	}
 
 	get diagnostics(): readonly AgentSessionRuntimeDiagnostic[] {
-		return this._diagnostics;
+		return this._trustChangeDiagnostics.length === 0
+			? this._diagnostics
+			: [...this._diagnostics, ...this._trustChangeDiagnostics];
 	}
 
 	get modelFallbackMessage(): string | undefined {
@@ -219,7 +230,48 @@ export class AgentSessionRuntime {
 	setPermissionPreset(preset: string): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
+		// While a replacement is in flight (or after one failed) the live session is the disposed one:
+		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
+		// it before that one goes live. There is no flag to clear: the check is the session itself.
+		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
 	}
+
+	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
+	private _disposedSession: AgentSession | undefined;
+
+	/**
+	 * Keeps a Full-access-only project trust in step with the preset (senpi#3414, #3420). Leaving Full
+	 * access withdraws it, unless the user has since saved "trust"; going back restores it, unless the
+	 * user saved "do not trust". Either way the session's runtime is rebuilt so project extensions,
+	 * skills, hooks and MCP servers load or unload, and nothing can cancel that rebuild. The trust is
+	 * never saved. Returns the rebuild, or undefined when the trust did not change.
+	 */
+	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> | undefined {
+		const settings = session.settingsManager;
+		// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
+		const saved = new ProjectTrustStore(this.services.agentDir).get(session.sessionManager.getCwd());
+		if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
+			settings.setProjectTrusted(false);
+		else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
+			settings.setProjectTrusted(true);
+		else return undefined;
+		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
+			this._trustChangeDiagnostics = [
+				...this._trustChangeDiagnostics,
+				{ type: "error", message: `Updating project code after a Full access change failed: ${String(error)}` },
+			];
+		});
+		return this._projectTrustChange;
+	}
+
+	/** Settles when the rebuild that followed a Full-access trust change has finished. */
+	get projectTrustChange(): Promise<void> {
+		return this._projectTrustChange;
+	}
+
+	private _projectTrustChange: Promise<void> = Promise.resolve();
+	/** Failed trust rebuilds; kept across session replacement so the error stays visible. */
+	private _trustChangeDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 
 	/**
 	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
@@ -253,6 +305,19 @@ export class AgentSessionRuntime {
 	 */
 	setBeforeSessionInvalidate(beforeSessionInvalidate?: () => void): void {
 		this.beforeSessionInvalidate = beforeSessionInvalidate;
+	}
+
+	/**
+	 * Run `listener` synchronously while the current session is REPLACED (new, switch, fork, resume), after
+	 * `session_shutdown` handlers and before the outgoing session is disposed, so it can still write to that
+	 * transcript. Unlike `setBeforeSessionInvalidate` it never runs from `dispose()`, and any number of
+	 * listeners coexist. Returns the function that removes it.
+	 */
+	onBeforeSessionReplace(listener: () => void): () => void {
+		this.sessionReplaceListeners.add(listener);
+		return () => {
+			this.sessionReplaceListeners.delete(listener);
+		};
 	}
 
 	/** Attachment transitions are ordered by the RPC entry's lifecycle mutex. */
@@ -295,13 +360,29 @@ export class AgentSessionRuntime {
 		return { cancelled: result?.cancel === true };
 	}
 
-	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+	private async teardownCurrent(
+		reason: SessionShutdownEvent["reason"],
+		targetSessionFile?: string,
+		targetSessionId?: string,
+	): Promise<void> {
 		const mark = (label: string): void => {
 			if (reason === "resume") time(label, "switch");
 		};
 		// Settle the active response before replacement so the outgoing turn and
-		// any completed tool results are persisted to the old session.
-		await this.session.abort();
+		// any completed tool results are persisted to the old session. The abort names the
+		// replacement, so a client sees why its running turn ended before `session_replaced` arrives.
+		await this.session.abort(
+			reason === "new" || reason === "fork" || reason === "resume"
+				? {
+						cause: {
+							kind: "session_replaced",
+							reason,
+							...(targetSessionFile === undefined ? {} : { targetSessionFile }),
+							...(targetSessionId === undefined ? {} : { targetSessionId }),
+						},
+					}
+				: undefined,
+		);
 		mark("abort");
 		const oldRunner = this.session.extensionRunner;
 		// Test hosts and partial runner implementations may lack identity introspection;
@@ -319,9 +400,11 @@ export class AgentSessionRuntime {
 			targetSessionFile,
 		});
 		mark("shutdown");
+		for (const listener of [...this.sessionReplaceListeners]) listener();
 		this.beforeSessionInvalidate?.();
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
+		this._disposedSession = this.session;
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);
@@ -342,11 +425,24 @@ export class AgentSessionRuntime {
 	}
 
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
-		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
-		this._session = result.session;
+		this._sessionHold =
+			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
+		// Its project trust follows the CURRENT preset before it goes live: a replacement built while the
+		// session was still Full access must not be reachable with that trust's project code (#3420). A
+		// preset change that lands while that rebuild runs reaches only the retired session, so sync
+		// again until the preset stops moving, then install the profile read last.
+		let syncedPreset: string | undefined;
+		while (
+			this._launchProfile?.permissionPreset !== undefined &&
+			this._launchProfile.permissionPreset !== syncedPreset
+		) {
+			syncedPreset = this._launchProfile.permissionPreset;
+			await this.syncFullAccessTrust(result.session, syncedPreset);
+		}
 		const profile = this._launchProfile;
+		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
@@ -385,10 +481,10 @@ export class AgentSessionRuntime {
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		// Held before the current session is torn down: a session being moved fails the switch here.
-		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager));
+		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
 		time("open", "switch");
 		try {
-			await this.teardownCurrent("resume", sessionManager.getSessionFile());
+			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 			await this.apply(
 				await this.createRuntime({
 					cwd: sessionManager.getCwd(),
@@ -429,7 +525,7 @@ export class AgentSessionRuntime {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}
 
-		await this.teardownCurrent("new", sessionManager.getSessionFile());
+		await this.teardownCurrent("new", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
@@ -484,7 +580,7 @@ export class AgentSessionRuntime {
 			if (!targetLeafId) {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
-				await this.teardownCurrent("fork", sessionManager.getSessionFile());
+				await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
 				await this.apply(
 					await this.createRuntime({
 						cwd: this.cwd,
@@ -506,7 +602,7 @@ export class AgentSessionRuntime {
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
-			await this.teardownCurrent("fork", sessionManager.getSessionFile());
+			await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
 			await this.apply(
 				await this.createRuntime({
 					cwd: sessionManager.getCwd(),
@@ -521,7 +617,9 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = this.session.sessionManager;
-		await this.teardownCurrent("fork", sessionManager.getSessionFile());
+		// The in-memory fork reuses this manager and gets its new id only after the old turn is torn down,
+		// so the replacement is named without an id it does not have yet.
+		await this.teardownCurrent("fork");
 		if (!targetLeafId) {
 			sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {
@@ -580,7 +678,7 @@ export class AgentSessionRuntime {
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
+		await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
 				cwd: sessionManager.getCwd(),
@@ -611,12 +709,17 @@ function wasFlushed(sessionManager: SessionManager): boolean {
 	return sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant");
 }
 
-function holdActiveSession(sessionManager: SessionManager, expectExisting: boolean): SessionHold | undefined {
+function holdActiveSession(
+	sessionManager: SessionManager,
+	expectExisting: boolean,
+	holderEndpoint?: SessionHolderEndpoint,
+): SessionHold | undefined {
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionManager.isPersisted() || sessionFile === undefined) return undefined;
 	return holdSessionFile(sessionFile, sessionManager.getSessionId(), {
 		cwd: sessionManager.getCwd(),
 		expectExisting,
+		holderEndpoint,
 	});
 }
 

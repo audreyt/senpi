@@ -7,6 +7,7 @@ import {
 	SESSION_PATH_RETRY_AFTER_MS,
 } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
+import { publishedSessionContext } from "./session-context-patch.ts";
 import {
 	type LiveWorkerPaths,
 	RESERVATION_DENIAL_CODES,
@@ -94,6 +95,11 @@ export class WorkerSessionRegistry {
 			const owner = key ? this.reservations.owner(key) : undefined;
 			if (key && owner) return this.attach(owner, key, options, profile);
 		}
+		if (options?.attachOnly)
+			throw new RpcSessionRegistryError("session_not_held", undefined, {
+				reason: "session_not_held",
+				action: "rediscover_holder",
+			});
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
 		const claims = new WorkerSessionClaims(this.options.pathReservations);
@@ -252,6 +258,7 @@ export class WorkerSessionRegistry {
 	}
 
 	list(): RpcSessionRow[] {
+		const now = this.now();
 		return [...this.entries].map(([sessionId, entry]) => {
 			const state = entry.worker?.snapshot?.state;
 			return {
@@ -261,10 +268,11 @@ export class WorkerSessionRegistry {
 				cwd: state?.cwd ?? entry.cwd,
 				name: state?.sessionName,
 				kind: entry.kind,
-				context: entry.context,
+				context: publishedSessionContext(entry.context, entry.contextOverlay),
 				// A closing entry has already released its last attachment; never publish that as negative.
 				attachments: Math.max(0, entry.attachments),
 				status: entry.state === "quarantined" ? "closing" : entry.state,
+				idleMs: Math.max(0, now - entry.lastCommandAt),
 			};
 		});
 	}

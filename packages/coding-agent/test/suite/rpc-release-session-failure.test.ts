@@ -89,7 +89,30 @@ describe("release_session when its entry cannot be written (real host)", () => {
 				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
 			},
 		});
-		expect(readFileSync(sessionPath, "utf8")).not.toContain("USER FOLLOW TEXT");
+		// The text was handed back: no message entry stores it, and its durable admission record (which keeps
+		// queued text by design) is no longer "queued", so a reopen does not restore it.
+		const entries = readFileSync(sessionPath, "utf8")
+			.split("\n")
+			.filter((line) => line !== "")
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						type: string;
+						customType?: string;
+						data?: Record<string, unknown>;
+						message?: unknown;
+					},
+			);
+		expect(
+			entries.filter(
+				(entry) => entry.type === "message" && JSON.stringify(entry.message).includes("USER FOLLOW TEXT"),
+			),
+		).toEqual([]);
+		const newest = new Map<string, unknown>();
+		for (const entry of entries)
+			if (entry.customType === "rpc_client_message_admission")
+				newest.set(String(entry.data?.clientMessageId), entry.data?.state);
+		expect([...newest.values()].filter((state) => state === "queued")).toEqual([]);
 		expect(await host.send({ type: "wake", id: "w", sessionId, delivery_ids: ["after-failure"] })).toMatchObject({
 			success: true,
 			data: { admitted: [{ delivery_id: "after-failure" }] },

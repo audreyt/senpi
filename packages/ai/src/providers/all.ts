@@ -16,6 +16,8 @@ import { cursorProvider } from "./cursor.ts";
 import modelDataManifest from "./data/.manifest.json" with { type: "json" };
 import { deepseekProvider } from "./deepseek.ts";
 import { devinProvider } from "./devin.ts";
+import { ELORIAN_MODELS } from "./elorian.models.ts";
+import { elorianProvider } from "./elorian.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { googleProvider } from "./google.ts";
@@ -63,6 +65,7 @@ export { ollamaProvider, radiusProvider };
  * read below must see them exactly like a generated one.
  */
 const FORK_OWNED_CATALOGS = {
+	elorian: ELORIAN_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 } as const;
 
@@ -82,10 +85,13 @@ const XIAOMI_MIMO_PROVIDERS = new Set([
 	"xiaomi-token-plan-sgp",
 ]);
 
+// mimo-v2.5-pro is deprecated upstream (models.dev) and drops out of a regenerated catalog; v2.6-pro is its successor.
+const XIAOMI_MIMO_PRO_IDS = new Set(["mimo-v2.5-pro", "mimo-v2.6-pro"]);
+
 function normalizeBuiltinModel<TApi extends Api>(model: Model<TApi> | undefined): Model<TApi> | undefined {
 	if (!model) return undefined;
 
-	if (XIAOMI_MIMO_PROVIDERS.has(model.provider) && model.id === "mimo-v2.5-pro") {
+	if (XIAOMI_MIMO_PROVIDERS.has(model.provider) && XIAOMI_MIMO_PRO_IDS.has(model.id)) {
 		return {
 			...model,
 			compat: {
@@ -221,6 +227,7 @@ export function builtinProviders(): Provider[] {
 		cursorProvider(),
 		devinProvider(),
 		deepseekProvider(),
+		elorianProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
 		googleProvider(),

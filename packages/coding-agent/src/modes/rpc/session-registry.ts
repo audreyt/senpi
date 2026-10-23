@@ -1,20 +1,25 @@
-import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
-import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
+import { EffectLedger } from "./effect-ledger.ts";
 import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
 import { assertRequestedModelResolved } from "./open-session-model.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
+import { publishedSessionContext } from "./session-context-patch.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
-import { settleClosingReservation, syncRuntimeMetadata } from "./session-registry-claims.ts";
-import { resolveMovedProfile } from "./session-registry-moved-path.ts";
-import { createEntrySwitchSession } from "./session-registry-switch.ts";
 import {
-	frozenProfile,
+	type PendingClaims,
+	settleClosingReservation,
+	settlePendingClaim,
+	syncRuntimeMetadata,
+	takeCrossGenerationClaim,
+} from "./session-registry-claims.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
+import { buildOpeningEntry, type OpeningEntry } from "./session-registry-opening.ts";
+import {
 	type OpenRpcSession,
 	type RpcSessionEntry,
 	type RpcSessionLaunchProfile,
@@ -22,7 +27,6 @@ import {
 	RpcSessionRegistryError,
 	type RpcSessionRegistryOptions,
 	type RpcSessionRow,
-	sessionIdentity,
 } from "./session-registry-types.ts";
 import {
 	beginSessionClose,
@@ -50,6 +54,7 @@ export {
 export class RpcSessionRegistry {
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new Set<string>();
+	private readonly pendingClaims: PendingClaims = new Map();
 	private readonly teardownHost: SessionTeardownHost;
 	private nextHandle = 0;
 	private readonly options: RpcSessionRegistryOptions;
@@ -121,7 +126,14 @@ export class RpcSessionRegistry {
 				throw new RpcSessionRegistryError("session_id_in_use");
 			}
 		}
-		if (sessionPath) await settleClosingReservation(this.entries.values(), sessionPath, this.closeGraceMs);
+		if (sessionPath) {
+			await settleClosingReservation(this.entries.values(), sessionPath, this.closeGraceMs);
+			// Re-checked right before the reservation decision, with no await in between: a waiter woken
+			// by a FAILED claim must see the next open's claim, not a bare reservation (senpi#3485 review).
+			const deadline = Date.now() + this.closeGraceMs;
+			while (this.pendingClaims.has(sessionPath))
+				await settlePendingClaim(this.pendingClaims, sessionPath, Math.max(0, deadline - Date.now()));
+		}
 		if (sessionPath && this.reservations.has(sessionPath)) {
 			return attachToOpenSession(
 				this.entries,
@@ -132,6 +144,12 @@ export class RpcSessionRegistry {
 				this.now(),
 			);
 		}
+		if (options?.attachOnly)
+			throw new RpcSessionRegistryError("session_not_held", undefined, {
+				reason: "session_not_held",
+				action: "rediscover_holder",
+			});
+		let claimSettled: (() => void) | undefined;
 		if (sessionPath) {
 			// Taken SYNCHRONOUSLY, before any await: a concurrent open for the same path must find the
 			// reservation already held, not a window between the decision and the record of it.
@@ -141,58 +159,49 @@ export class RpcSessionRegistry {
 			// Only AWAIT when there is a cross-generation claim to take: `await undefined` still costs a
 			// microtask, and an embedded registry (no second generation) must reach the "opening" entry
 			// in the same tick a caller that raced it would look, exactly as it did before generations.
-			const holder = this.options.pathReservations
-				? await this.options.pathReservations.claim(sessionPath)
-				: undefined;
-			if (holder) {
-				this.reservations.delete(sessionPath);
-				throw new RpcSessionRegistryError("session_path_in_use", undefined, {
-					owner: holder,
-					retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
-				});
-			}
+			// A concurrent open of this path waits on `claimSettled` instead of finding a reservation no
+			// entry backs (senpi#3485); it is settled once the entry is recorded or the reservation is back.
+			if (this.options.pathReservations)
+				claimSettled = await takeCrossGenerationClaim(
+					this.reservations,
+					this.pendingClaims,
+					this.options.pathReservations,
+					sessionPath,
+				);
 		}
 
-		// Resume vs create parity (D1 + omo SenpiSessionRuntime.ts:198-200):
-		// Create-only launch semantics mirror classic startup flags. A resumed
-		// session restores its persisted model and thinking level instead of being
-		// overridden by the new open_session request.
-		const isResume = sessionPath !== undefined && existsSync(sessionPath);
-		// Re-opening an existing session file is a resume, exactly like interactive
-		// /resume (AgentSessionRuntime.switchSession). Without the event the session
-		// starts with reason "startup" and every extension that only rebuilds state
-		// on a resume - the ask-user dangling-question hook - stays unreachable from
-		// the RPC restart path. A session created by this open stays "startup".
-		const sessionStartEvent: SessionStartEvent | undefined = isResume
-			? { type: "session_start", reason: "resume" }
-			: undefined;
-		const storedProfile = frozenProfile({ ...profile, ...(sessionPath ? { sessionPath } : {}) });
-		const runtimeProfile = isResume
-			? frozenProfile({ ...storedProfile, creationModel: undefined, initialThinkingLevel: undefined })
-			: storedProfile;
-
 		const handle = `rpc-${++this.nextHandle}`;
-		const entry: RpcSessionEntry = {
-			state: "opening",
-			scope: new ProviderScope(),
-			profile: storedProfile,
-			...sessionIdentity(storedProfile),
-			sessionPath,
-			reservationKey: sessionPath,
-			cwd: storedProfile.cwd,
-			attachments: 1,
-			retainOnDisconnect: options?.retainOnDisconnect === true,
-			lastCommandAt: this.now(),
-			lifecycleMutex: Promise.resolve(),
-		};
-		entry.switchSession = createEntrySwitchSession(entry, this.options.createRuntime, () =>
-			this.syncRuntimeMetadata(),
-		);
-		// Recorded before the first await so the synchronous collision guard above sees an open
-		// that is still being built. `manager.getSessionId()` overwrites it below with the
-		// authoritative value, which on a resume is the header's id, not the requested one.
-		if (requestedDurableId !== undefined) entry.durableSessionId = requestedDurableId;
+		let opening: OpeningEntry;
+		try {
+			opening = buildOpeningEntry({
+				profile,
+				sessionPath,
+				requestedDurableId,
+				options,
+				now: this.now(),
+				createRuntime: this.options.createRuntime,
+				sync: () => this.syncRuntimeMetadata(),
+			});
+		} catch (cause) {
+			// Give the path back before waking waiters, or they find a reservation no entry backs. A failed
+			// claim release is reported, never allowed to strand the waiters or replace the build error.
+			try {
+				if (sessionPath) {
+					this.reservations.delete(sessionPath);
+					await this.options.pathReservations?.release(sessionPath);
+				}
+			} catch (releaseCause) {
+				process.stderr.write(
+					`senpi rpc open of ${sessionPath} could not release its claim: ${String(releaseCause)}\n`,
+				);
+			} finally {
+				claimSettled?.();
+			}
+			throw cause;
+		}
+		const { entry, storedProfile, runtimeProfile, sessionStartEvent, settleOpen } = opening;
 		this.entries.set(handle, entry);
+		claimSettled?.();
 		this.options.onSizeChange?.(this.entries.size);
 		try {
 			const newSessionOptions = requestedDurableId !== undefined ? { id: requestedDurableId } : undefined;
@@ -209,9 +218,12 @@ export class RpcSessionRegistry {
 				}),
 			);
 			assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
+			ClientAdmissions.sealQueuedOnReplace(entry.runtime);
+			EffectLedger.sealOnReplace(entry.runtime);
 			entry.durableSessionId = manager.getSessionId();
 			entry.sessionPath ??= manager.getSessionFile();
 			entry.state = "open";
+			settleOpen.resolve();
 			return { sessionId: handle, durableSessionId: entry.durableSessionId, sessionPath: entry.sessionPath };
 		} catch (error) {
 			// Runtime construction may have started extensions, watchers, and provider
@@ -231,8 +243,13 @@ export class RpcSessionRegistry {
 					if (sessionPath) await releaseWithinGrace(this.teardownHost, handle, sessionPath);
 				}
 			}
-			if (error instanceof RpcSessionRegistryError) throw error;
-			throw new RpcSessionRegistryError("open_failed", error instanceof Error ? error.message : undefined);
+			if (error instanceof RpcSessionRegistryError) {
+				settleOpen.reject(error);
+				throw error;
+			}
+			const wrapped = new RpcSessionRegistryError("open_failed", error instanceof Error ? error.message : undefined);
+			settleOpen.reject(wrapped);
+			throw wrapped;
 		}
 	}
 
@@ -282,6 +299,7 @@ export class RpcSessionRegistry {
 
 	list(): RpcSessionRow[] {
 		this.syncRuntimeMetadata();
+		const now = this.now();
 		return [...this.entries].map(([sessionId, entry]) => ({
 			sessionId,
 			durableSessionId: entry.durableSessionId,
@@ -289,10 +307,11 @@ export class RpcSessionRegistry {
 			cwd: entry.cwd,
 			name: entry.runtime?.session.sessionManager.getSessionName(),
 			kind: entry.kind,
-			context: entry.context,
+			context: publishedSessionContext(entry.context, entry.contextOverlay),
 			// A closing entry has already released its last attachment; never publish that as negative.
 			attachments: Math.max(0, entry.attachments),
 			status: entry.state === "quarantined" ? "closing" : entry.state,
+			idleMs: Math.max(0, now - entry.lastCommandAt),
 		}));
 	}
 

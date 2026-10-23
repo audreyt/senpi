@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import { type ClientMessageIdentity, readClientMessageIdentity } from "../../core/client-message-identity.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 
 export const clientInputContext = new AsyncLocalStorage<ClientMessageIdentity>();
 
@@ -39,7 +40,7 @@ export class ClientMessageEvents {
 		if (event.type === "message_start" && event.message.role === "user") {
 			if (!this.sawUser) this.active = [];
 			this.sawUser = true;
-			const identity = readClientMessageIdentity(event.message);
+			const identity = clientFacingIdentity(readClientMessageIdentity(event.message));
 			if (identity.clientMessageId !== undefined || identity.clientTurnId !== undefined) this.inputs.push(identity);
 			this.active = this.inputs;
 			this.flush();
@@ -69,7 +70,7 @@ export class ClientMessageEvents {
 	private output(event: AgentSessionEvent): void {
 		const identity =
 			"message" in event && event.message.role === "user"
-				? readClientMessageIdentity(event.message)
+				? clientFacingIdentity(readClientMessageIdentity(event.message))
 				: this.active.at(-1);
 		const correlated =
 			event.type === "turn_start" ||

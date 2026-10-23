@@ -1,3 +1,125 @@
+## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
+
+### What changed
+
+Regression tests only. `test/model-registry.test.ts` removes a custom provider id with a stored key and expects it gone from `getAll()` and `getAvailable()` after `refresh()`. `test/suite/rpc-auth-and-connection-handler.test.ts` runs the desktop's removal sequence over RPC (delete the models.json block, then `logout`) for a key-bearing and a keyless custom provider and expects `get_available_models` to drop it without a restart. `test/suite/rpc-connection-harness.ts` takes an optional `modelsJsonPath`, because the default passes the temp directory as the models path.
+
+### Why
+
+Desktop sisyphuslabs/omo-desktop-app#1812 kept its Remove action off because a removed server's models stayed listed. Current `logout` + unscoped `refresh()` rebuilds providers from `models.json`, and socket hosts share one `ModelRuntime`; nothing pinned that.
+
+### Why an extension could not handle it
+
+Tests of core RPC and model-runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `describe` blocks these tests join, when upstream adds neighbors there.
+
+## 2026-10-13 - Claude Agent SDK 0.3.296 (senpi#3258)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` pin moves 0.3.292 -> 0.3.296; `bun.lock` refreshes the pin and its 8 platform optionalDependencies.
+- The root `package-lock.json` (the 8 platform packages relocked) and `packages/coding-agent/install-lock/package-lock.json` follow the same pin; CI's `npm ci` jobs and the install-lock gate read those two.
+
+### Why
+
+- The releasability gate's "Claude Agent SDK currency" job fails while the pin trails the latest published release, blocking the 2026.10.12 release; the bump keeps new Claude models usable on anthropic-subscription.
+
+### Why an extension could not handle it
+
+- The SDK pin and its platform binaries are build-time dependency resolution, not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
+- The SDK entries in the root `package-lock.json` and `packages/coding-agent/install-lock/package-lock.json` at the next dependency sync.
+
+## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
+
+### What changed
+
+Extend `test/suite/regressions/3167-retired-app-server.test.ts` with leading boolean and valued options, early rejection before model-runtime creation, and positive controls for explicit modes, print values, delimiter-separated text, ordinary prompts and option values.
+
+### Why
+
+The first retirement guard missed legacy commands when a recognized option came first.
+
+### Why an extension could not handle it
+
+These tests verify CLI parsing before extensions or a model runtime are initialized.
+
+### Expected merge conflict zones
+
+The invocation tables and main-entry assertion in the retirement regression.
+
+## 2026-10-13 - Keep shared TPS regressions on supported modes (senpi#3167)
+
+### What changed
+
+Remove the retired app-server value from the context fixture and negative-mode cases in `test/suite/regressions/3236-tps-notify-tui-only.test.ts`, introduced by the main merge. Preserve the TUI notice and zero-output/elapsed assertions, and the RPC, JSON and print no-notice cases.
+
+### Why
+
+The retired protocol has no runnable mode; the shared TPS regression must continue covering every surviving mode.
+
+### Why an extension could not handle it
+
+This updates a repository test fixture, not runtime behavior.
+
+### Expected merge conflict zones
+
+The context mode union and `it.each` mode array in the TPS regression.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the dedicated app-server QA command, direct ws and @types/ws dependencies, and the deleted generated-tree build exclusion. Keep Native RPC QA on qa-shared, with a protocol-neutral fake API key.
+
+- `packages/coding-agent/package.json`
+- `packages/coding-agent/scripts/qa-rpc-socket/ensure-host.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/host-lifecycle.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/load-1000.mjs`
+- `packages/coding-agent/scripts/qa-shared/lib/env.mjs`
+- `packages/coding-agent/tsconfig.build.json`
+- `packages/coding-agent/vitest.config.ts`
+- `packages/coding-agent/test/compile-cache-invocation.test.ts`: retain session-cache coverage with JSON print mode instead of the retired command; preserve the legacy OpenAI provider argument cases.
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
+
+### What changed
+
+- Moved scratch environment, process cleanup, the HTTP model fixture, and cleanup regression coverage to `scripts/qa-shared/lib`.
+- Extracted the shared PASS/FAIL reporter from the Codex JSON-RPC client.
+- Native RPC QA now imports the neutral modules. The existing app-server environment and cleanup entry points forward to the same module instances until the protocol removal lands, preserving external OmO QA consumers.
+- Added regression coverage for package-root resolution, environment isolation, shared scratch ownership, and a real HTTP fixture request.
+
+### Why
+
+- Native RPC and OmO QA reuse these helpers but do not speak the Codex app-server protocol. They must remain available when that protocol is removed.
+
+### Why an extension could not handle it
+
+- These scripts own test-process setup and teardown before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/qa-app-server/lib` is removed by the following retirement PR. Preserve the neutral modules and their shared behavior tests.
+
 ## 2026-10-12 - Document config/state separation (senpi#3178)
 
 ### What changed
@@ -137,7 +259,7 @@ The `exports` map in `packages/coding-agent/package.json` at the next upstream m
 
 ### What changed
 
-- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.292 -> 0.3.299; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.296 -> 0.3.299; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
 
 ### Why
 

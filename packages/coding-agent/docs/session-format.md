@@ -239,7 +239,7 @@ Emitted when the user switches models mid-session. The latest entry is the selec
 {"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o","originalProvider":"anthropic","originalModelId":"claude-sonnet-4-5","source":"picker","actor":"model-selector"}
 ```
 
-`source` says what made the switch: `command` (a typed `/model`), `picker` (the model or favorites picker), `cycle` (the favorites cycle key), `control` (a terminal's control endpoint), `rpc` (RPC `set_model`, `cycle_model` and `set_fast_mode`; `actor` names the latter two), `app-server`, `extension` (`actor` is the extension path), `provider-login`, `fallback`, `fallback-revert`, `held-switch` (a switch held until compaction made room; `actor` names what first asked for it), `restore`, or `sdk` (an SDK caller that named none). `actor` says who issued it where that is known. `duringTurn: true` marks a switch that landed while a turn was streaming; the terminal shows those as a transcript row. Entries written before these fields existed omit them. A `thinking_level_change` written because a switch re-applied the model's level carries the same `triggerSource` and `triggerActor`.
+`source` says what made the switch: `command` (a typed `/model`), `picker` (the model or favorites picker), `cycle` (the favorites cycle key), `control` (a terminal's control endpoint), `rpc` (RPC `set_model`, `cycle_model` and `set_fast_mode`; `actor` names the latter two), `app-server` (retained for historical entries from the retired compatibility mode), `extension` (`actor` is the extension path), `provider-login`, `fallback`, `fallback-revert`, `held-switch` (a switch held until compaction made room; `actor` names what first asked for it), `restore`, or `sdk` (an SDK caller that named none). `actor` says who issued it where that is known. `duringTurn: true` marks a switch that landed while a turn was streaming; the terminal shows those as a transcript row. Entries written before these fields existed omit them. A `thinking_level_change` written because a switch re-applied the model's level carries the same `triggerSource` and `triggerActor`.
 
 ### ThinkingLevelChangeEntry
 
@@ -297,6 +297,8 @@ Extension state persistence. Does NOT participate in LLM context.
 {"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
 ```
 
+Optional field: `startupBookkeeping: true` marks an entry its extension wrote at session start without any user action (`pi.appendEntry(customType, data, { startupBookkeeping: true })`). A session file this process created that holds only setup entries and such marked entries is removed when the session closes without a conversation; an unmarked custom entry keeps the file.
+
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 [Virtual model](virtual-models.md) router state is stored as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
@@ -314,11 +316,11 @@ Stale-stopped goals stay stopped when reopened. A notice at the stale stop and o
 
 Goal usage measures work while the goal's accounting window is open. Non-user-input turns, including extension `sendUserMessage` and `sendMessage({ triggerTurn: true })` deliveries, add neither tokens nor time to a stale-stopped goal, just as later turns do not accrue usage for a user-paused or completed goal. The same turns count assistant input/output tokens and elapsed time while the goal is active with an open window. Usage is display-only; it does not impose a budget limit.
 
-The footer shows `Goal stopped: no progress (send a message or /goal resume)` without a pursuit timer, and `/goal` identifies the stop while retaining committed usage totals. The persisted goal keeps `status: "active"` plus `continuationStoppedAt` so accepted input and `/goal resume` retain their existing behavior. Goal-tool snapshots instead report `status: "paused"` and include `continuationStoppedAt` for the stopped label; their cards use the paused glyph and styling. App-server `ThreadGoal.status` also reports `paused`, using its existing schema. Active, user-paused, blocked, and completed goals otherwise retain their displays.
+The footer shows `Goal stopped: no progress (send a message or /goal resume)` without a pursuit timer, and `/goal` identifies the stop while retaining committed usage totals. The persisted goal keeps `status: "active"` plus `continuationStoppedAt` so accepted input and `/goal resume` retain their existing behavior. Goal-tool snapshots instead report `status: "paused"` and include `continuationStoppedAt` for the stopped label; their cards use the paused glyph and styling. Active, user-paused, blocked, and completed goals otherwise retain their displays.
 
 In the persisted goal state, `lastStartedAt` is the last usage checkpoint, in Unix epoch seconds, not the start of the entire run. Clients displaying live elapsed time use committed `timeUsedSeconds` plus the nonnegative time since `lastStartedAt`. When `lastStartedAt` is absent, including after a stale stop, display only committed `timeUsedSeconds`.
 
-Model-facing goal tool JSON additionally includes `continuation: { status: "stale_stopped", message: string }` for a stale-stopped goal. The message explains that progress was stale and the goal resumes when the user sends a message or runs `/goal resume`. This object is absent for ordinary active, user-paused, and completed goals; it is not part of the stored goal, UI snapshot, or app-server schema.
+Model-facing goal tool JSON additionally includes `continuation: { status: "stale_stopped", message: string }` for a stale-stopped goal. The message explains that progress was stale and the goal resumes when the user sends a message or runs `/goal resume`. This object is absent for ordinary active, user-paused, and completed goals; it is not part of the stored goal or UI snapshot.
 
 ### CustomMessageEntry
 
@@ -462,7 +464,7 @@ Key methods for working with sessions programmatically.
 - `appendModelChange(provider, modelId)` - Record model change
 - `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction; pass `null` as `firstKeptEntryId` to retain no earlier entries
 - `appendContextEdit(targetId, replacement)` - Omit (`null`) or replace one entry's message in future model context without changing raw history
-- `appendCustomEntry(customType, data?)` - Extension state (not in context)
+- `appendCustomEntry(customType, data?, options?)` - Extension state (not in context); `options.startupBookkeeping` marks startup bookkeeping
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
 - `appendLabelChange(targetId, label)` - Set/clear label

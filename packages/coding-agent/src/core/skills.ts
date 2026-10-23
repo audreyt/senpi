@@ -8,6 +8,8 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
+export { formatSkillsForPrompt } from "./skills-prompt.ts";
+
 /** Max name length per spec */
 const MAX_NAME_LENGTH = 64;
 
@@ -349,77 +351,6 @@ function loadSkillFromFile(
 		},
 		diagnostics,
 	};
-}
-
-/**
- * Format skills for inclusion in a system prompt.
- * Uses XML format per Agent Skills standard.
- * See: https://agentskills.io/integrate-skills
- *
- * Skills with disableModelInvocation=true are excluded from the prompt
- * (they can only be invoked explicitly via /skill:name commands).
- */
-// Skill roots share long absolute prefixes across every skill under them; rendering
-// that prefix per skill bills it once per skill. The roots table pays it once per
-// distinct root and each location becomes a short alias/relative path. A one-line
-// rule tells the model to expand aliases by joining them back to the root.
-// `fileReadTool` lets a bash-only tool set still load skills: the loading rule names
-// the tool the session actually has.
-export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
-	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
-
-	if (visibleSkills.length === 0) {
-		return "";
-	}
-
-	const rootByPath = new Map<string, string>();
-	for (const skill of visibleSkills) {
-		const dir = skill.filePath.split("/").slice(0, -2).join("/"); // parent of <name>/SKILL.md
-		if (!rootByPath.has(dir)) rootByPath.set(dir, `r${rootByPath.size}`);
-	}
-
-	const lines = [
-		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		fileReadTool === "read"
-			? "Use the read tool to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason."
-			: "Use bash to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason.",
-		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-		"",
-		"<skill_roots>",
-	];
-	for (const [dir, alias] of rootByPath) {
-		lines.push(`  <${alias}>${escapeXml(dir)}</${alias}>`);
-	}
-	lines.push(
-		"</skill_roots>",
-		"A location's `rN/` prefix expands to the matching root above.",
-		"",
-		"<available_skills>",
-	);
-
-	for (const skill of visibleSkills) {
-		const dir = skill.filePath.split("/").slice(0, -2).join("/");
-		const alias = rootByPath.get(dir);
-		const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
-		lines.push("  <skill>");
-		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
-		lines.push(`    <location>${escapeXml(`${alias}/${relative}`)}</location>`);
-		lines.push("  </skill>");
-	}
-
-	lines.push("</available_skills>");
-
-	return lines.join("\n");
-}
-
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
 }
 
 export interface LoadSkillsOptions {

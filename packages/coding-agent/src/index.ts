@@ -15,6 +15,7 @@ export {
 	VERSION,
 } from "./config.ts";
 export {
+	type AgentAbortCause,
 	AgentSession,
 	type AgentSessionConfig,
 	type AgentSessionEvent,

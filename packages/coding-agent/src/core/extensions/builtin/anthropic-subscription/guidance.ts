@@ -23,8 +23,13 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		// omo#8383: name the authentication failure. The recovery is a re-login,
 		// and the outer credential-pool classifier maps "authentication error" to
 		// auth_error instead of laundering the block into a rate-limit cooldown.
+		const recheck =
+			soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+				? [`  Next automatic re-check: ${new Date(soonestUnblockAt).toISOString()}.`]
+				: [];
 		return [
 			`All Claude accounts for ${PROVIDER} are currently blocked (authentication error).`,
+			...recheck,
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
 			`  /claude-account list  - inspect account states`,
 		].join("\n");

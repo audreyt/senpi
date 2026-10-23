@@ -251,6 +251,20 @@ export function isClaudeHaiku55Model(modelId: string): boolean {
 	return CLAUDE_HAIKU_55_MARKERS.some((marker) => normalized.includes(marker));
 }
 
+// Argon id shapes verified against the generated catalogs (2026-10-15):
+// gemini-4-argon (google, google-vertex, github-copilot, opencode, venice),
+// google/gemini-4-argon and its :batch row (openrouter, vercel-ai-gateway),
+// opencode-go's gemini-4-argon-contributor, the Antigravity -low/-medium/-high
+// SKUs, and the catalog display names of the plain and batch rows.
+// Bare gemini-4, other generations of the family and unknown siblings stay out.
+export function hasGemini4ArgonSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gemini[._-]?4[._-]argon(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+export function isGemini4ArgonModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGemini4ArgonSignal(model.id) || (model.name !== undefined && hasGemini4ArgonSignal(model.name));
+}
+
 export type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 export function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {

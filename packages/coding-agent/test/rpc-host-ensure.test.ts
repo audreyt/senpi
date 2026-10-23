@@ -5,13 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import {
-	ProcessIdentityUnreadableError,
-	processIsLive,
-	processMatchesPidFile,
-	readProcessStartTime,
-	waitForStartTime,
-} from "../src/modes/app-server/daemon/process.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
@@ -22,6 +15,13 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import {
+	ProcessIdentityUnreadableError,
+	processIsLive,
+	processMatchesPidFile,
+	readProcessStartTime,
+	waitForStartTime,
+} from "../src/utils/process-identity.ts";
 import { killAndWait, processesUnder, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];
@@ -735,7 +735,7 @@ async function writeRegistration(
 ): Promise<void> {
 	const paths = daemonPaths(qa);
 	const instanceId = `fixture-${record.pid}`;
-	const stamp = writer ?? { pid: process.pid, startTime: (await readProcessStartTime(process.pid)) ?? null };
+	const stamp = writer ?? { pid: process.pid, startTime: (await readFixtureStartTime(process.pid)) ?? null };
 	await mkdir(join(paths.generationsDir, instanceId), { recursive: true, mode: 0o700 });
 	await writeFile(
 		join(paths.generationsDir, instanceId, "host.pid"),
@@ -747,6 +747,13 @@ async function writeRegistration(
 		`${JSON.stringify({ layout: 2, instance_id: instanceId, generation_dir: `generations/${instanceId}`, writer: stamp })}\n`,
 		{ mode: 0o600 },
 	);
+}
+/**
+ * Fixture setup reads identities the way production's unhurried fallback does: a loaded Windows runner
+ * can make Get-CimInstance outlive the 1 s default, and a killed probe would fail setup, not the case.
+ */
+function readFixtureStartTime(pid: number): Promise<string | undefined> {
+	return readProcessStartTime(pid, process.platform, 15_000);
 }
 /** Who the pidfile claims wrote it: this process, this process's pid after a reboot recycled it, or the host itself. */
 type Writer = "self" | "recycled-pid" | "foreign";
@@ -929,11 +936,11 @@ async function writerRecord(
 	selfWriterStartTime?: string,
 ): Promise<{ pid: number; startTime: string | null }> {
 	if (writer === "self") {
-		return { pid: process.pid, startTime: selfWriterStartTime ?? (await readProcessStartTime(process.pid)) ?? null };
+		return { pid: process.pid, startTime: selfWriterStartTime ?? (await readFixtureStartTime(process.pid)) ?? null };
 	}
 	// A recycled pid carries this process's number with somebody else's start time.
 	if (writer === "recycled-pid") return { pid: process.pid, startTime: "1970-01-01T00:00:00.000Z" };
-	return { pid: hostPid, startTime: (await readProcessStartTime(hostPid)) ?? null };
+	return { pid: hostPid, startTime: (await readFixtureStartTime(hostPid)) ?? null };
 }
 
 async function protocolInfo(socketPath: string): Promise<Record<string, unknown>> {

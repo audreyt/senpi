@@ -1,3 +1,124 @@
+## 2026-10-17 - Elorian native capabilities and account-aware catalog
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: registers Elorian and its fork-owned catalog so regeneration does not remove it.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: add Glimpse, API-key authentication, published prices, supported thinking levels, account-specific limits, and the standard conservative vision resize profile.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: adapt Elorian media and hosted capabilities to the existing completion stream; encode local tools with the existing MorphXML protocol and a client-side handoff user turn because the live API rejects client function declarations and its hosted dispatcher cannot execute local functions. Images and video stay native. The provider applies this protocol itself so legacy dispatch does not double-wrap and discard native metadata.
+- `packages/ai/src/providers/elorian-runs.ts`: maps background runs to deferred handles, completion retrieval, and cancellation, selecting the protocol from the final payload and retaining chat header precedence across the lifecycle.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: Elorian is absent from models.dev but must be available through the built-in model lookup and CLI.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: Elorian limits vary by account and reasoning only accepts low, medium, or xhigh.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: Elorian's video uploads, hosted tools and response metadata are not standard OpenAI fields; its deployed endpoint accepts hosted declarations but rejects client function tools despite the SDK compatibility table.
+- `packages/ai/src/providers/elorian-runs.ts`: queued background work returns a run rather than a streaming completion.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: the immutable built-in catalog is assembled before extension registration.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: built-in provider authentication and refreshed limits belong to the model runtime.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: the provider must preserve wire capabilities on every dispatch, including noninteractive clients.
+- `packages/ai/src/providers/elorian-runs.ts`: durable deferred handles must reach the core response lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: provider imports, fork-owned catalogs, and provider construction.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: provider registration and catalog metadata if upstream adds Elorian.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: Elorian request and media protocol changes.
+- `packages/ai/src/providers/elorian-runs.ts`: run status and deferred-response protocol.
+
+## 2026-10-14 - Cursor provider respects capability `maxTokens` override
+
+### What changed
+
+- `packages/ai/src/providers/cursor.ts`: `fetchCursorModels` prefers `entry.maxTokens` from the normalized Cursor capability entry before falling back to the uniform `maxTokensByVariant` discovery placeholder (`64000`).
+
+### Why
+
+`fetchCursorUsableModels` stamps `maxTokens: 64_000` on every discovered variant because `GetUsableModels` has no output-token field; without preferring `entry.maxTokens`, `cursor/gemini-4-argon`'s 1,000,000 output limit was overwritten by `64000`.
+
+### Why an extension could not handle it
+
+The builtin `cursor` provider constructs `Model<"cursor-agent">` records during `Models.refresh` inside `packages/ai/src/providers/cursor.ts`.
+
+### Expected merge conflict zones
+
+- `fetchCursorModels` `maxTokens` assignment in `packages/ai/src/providers/cursor.ts`.
+## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: the Xiaomi MiMo compat normalization (reasoning content on assistant messages, DeepSeek thinking format, thinking cannot be disabled) applies to `mimo-v2.6-pro` as well as `mimo-v2.5-pro`.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: models.dev marked `mimo-v2.5-pro` deprecated, so a regenerated catalog drops it and `mimo-v2.6-pro` becomes the xiaomi default. Its generated entry already carries the same compat; the normalization keeps that guaranteed if a future regeneration loses it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: built-in model normalization runs when the bundled catalog is loaded, before any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: `normalizeBuiltinModel` and the Xiaomi provider/id sets above it.
+
+## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
+
+### What changed
+
+`RegisterFauxProviderOptions.responseHeaders` sets the headers every scripted response reports through `onResponse` (default none, unchanged behaviour).
+
+- `packages/ai/src/providers/faux.ts`
+
+### Why
+
+Tests of code that reads provider response headers (subscription limit windows) need a provider that sends them, without a network call.
+
+### Why an extension could not handle it
+
+The faux provider is the in-tree test transport; an extension cannot change what it passes to `onResponse`.
+
+### Expected merge conflict zones
+
+The `onResponse` calls in the faux core and the options interface.
+
+## 2026-10-14 - OpenCode Go registers the Google Generative AI transport (senpi#3342)
+
+### What changed
+
+- `packages/ai/src/providers/opencode-go.ts`: `opencodeGoProvider()` registers `google-generative-ai` (`withOpenCodeSessionHeader(googleGenerativeAIApi())`) beside its Anthropic Messages and OpenAI Completions/Responses transports, the same registration the OpenCode Zen provider (`opencode.ts`) already has. The provider's API union gains `google-generative-ai`.
+
+### Why
+
+- The refreshed models.dev catalog lists an OpenCode Go model in a `google-generative-ai` API group. Without a transport for it the typed catalog no longer fit the provider (TS2322), main stopped type-checking, and the v2026.10.14 release could not be cut. Registering the transport gives that model a working route instead of filtering it out.
+
+### Why an extension could not handle it
+
+- The builtin provider factory owns its transport map; an extension can register a separate provider but cannot add a transport to a builtin provider's catalog models.
+
+### Expected merge conflict zones
+
+- LOW: the import block, the API type union, and the `api` map of `opencodeGoProvider()`.
+
+## 2026-10-14 - The direct anthropic provider offers no Claude subscription OAuth (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: `anthropicProvider()` no longer registers the "Anthropic (Claude Pro/Max)" OAuth method; it keeps API-key, `ANTHROPIC_AUTH_TOKEN`, env and workload-identity auth. Claude subscriptions sign in through the coding-agent `anthropic-subscription` lane, which runs the same OAuth flow (`loadAnthropicOAuth`) behind the Claude Agent SDK.
+
+### Why
+
+- Anthropic bills a Claude subscription token sent straight to the Messages API as a third-party app: every request is refused with "Third-party apps now draw from your extra usage, not your plan limits", so a user who signed in this way could never use their plan (senpi#3259). The Agent SDK lane runs requests through Claude Code, the path that draws from plan limits.
+
+### Why an extension could not handle it
+
+- Login surfaces (TUI `/login`, RPC `get_auth_providers`, `AuthStorage.getOAuthProviders()`) enumerate `builtinProviders()` auth methods directly; an extension can add a provider but cannot remove a builtin provider's OAuth method.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` block of `anthropicProvider()` and its two OAuth imports.
+
 ## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
 
 ### What changed

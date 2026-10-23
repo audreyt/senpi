@@ -44,7 +44,7 @@ const RUNTIME_SPECIFIER = "runtime";
 // Inside a `bun build --compile` binary the shim has no on-disk path (import.meta.url is a
 // $bunfs URL), so the file route is only available when the file is really there; the compiled
 // binary keeps the virtual module, which it never had a problem with.
-const runtimeModulePath = resolveRuntimeModulePath();
+export const runtimeModulePath = resolveRuntimeModulePath();
 
 function resolveRuntimeModulePath(): string | undefined {
 	try {

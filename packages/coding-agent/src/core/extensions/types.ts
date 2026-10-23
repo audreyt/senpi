@@ -26,6 +26,8 @@ import type {
 	Api,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	AuthContext,
+	AuthResult,
 	ClassifierApi,
 	ConstrainedSamplingConfig,
 	Context,
@@ -110,6 +112,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
@@ -472,7 +475,7 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 /**
  * Context passed to extension event handlers.
  */
-export type ExtensionMode = "tui" | "rpc" | "app-server" | "json" | "print";
+export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
 	/** UI methods for user interaction */
@@ -1467,6 +1470,12 @@ export interface AgentEndEvent {
 	willRetry?: boolean;
 	/** Present when the host can attribute the abort to a user action or internal operation. */
 	abortSource?: "user" | "system" | "provider";
+	/**
+	 * Present on a system abort the turn deadline lease caused (`turn_inactivity_ms` or
+	 * `turn_max_runtime_ms`). A deadline stop is never auto-continued: goal continuations,
+	 * monitor backstops and hidden nudges hold off until admitted user input clears the hold.
+	 */
+	deadline?: { kind: "inactivity" | "max_runtime"; limitMs: number; elapsedMs: number };
 }
 
 export type AgentActivityOutcome = "completed" | "aborted" | "error";
@@ -2398,6 +2407,14 @@ export interface ExtensionAPI {
 	/** Get the value of a registered CLI flag. */
 	getFlag(name: string): boolean | string | undefined;
 
+	/**
+	 * The permission preset the permission system enforces for this session right now: the flag, then
+	 * project and global settings (with the same untrusted-project handling), then the `full-access`
+	 * default. A preset flag changed since the last tool call is applied first. `undefined` when the
+	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
+	 */
+	getPermissionPreset(): PermissionPresetName | undefined;
+
 	// =========================================================================
 	// Message Rendering
 	// =========================================================================
@@ -2447,7 +2464,7 @@ export interface ExtensionAPI {
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
-	appendEntry<T = unknown>(customType: string, data?: T): void;
+	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
 	// =========================================================================
 	// Session Metadata
@@ -2691,6 +2708,24 @@ export interface ProviderConfig {
 	 * Use context.publish({ persist: entry }) when the catalog should persist across sessions.
 	 */
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
+	/**
+	 * Ambient api-key auth resolved from a shared cloud credential chain (Google
+	 * ADC, AWS env) rather than a credential configured for this provider. The
+	 * provider counts as configured only while `resolve` yields a result, and the
+	 * ambient marker keeps it from outranking a provider the user configured when
+	 * the automatic default model is chosen (senpi#2327). Ignored when `apiKey` or
+	 * credential headers already supply auth.
+	 */
+	ambientAuth?: {
+		/** Display name, e.g. "Google Cloud credentials". */
+		name?: string;
+		/**
+		 * Resolve from the ambient chain. `undefined` means the chain currently
+		 * supplies no credential, so the provider stays unavailable. A returned
+		 * result should carry `ambient: true`.
+		 */
+		resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
 		/** Display name for the provider in login UI. */
@@ -2848,7 +2883,16 @@ export type SendUserMessageHandler = (
 	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
-export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
+export interface AppendEntryOptions {
+	/**
+	 * Mark the entry as bookkeeping written at session start without any user action. A session file this
+	 * process created that holds only setup entries and such bookkeeping is removed when the session closes
+	 * without a conversation (senpi#3263). Leave it unset for anything a user created or anything billed.
+	 */
+	startupBookkeeping?: boolean;
+}
+
+export type AppendEntryHandler = <T = unknown>(customType: string, data?: T, options?: AppendEntryOptions) => void;
 
 export type SetSessionNameHandler = (name: string) => void;
 

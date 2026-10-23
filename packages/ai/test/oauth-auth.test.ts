@@ -145,7 +145,7 @@ describe("OAuthAuth adapters", () => {
 });
 
 describe("OAuth through Models.getAuth (lazy load chain)", () => {
-	it("resolves stored anthropic oauth credentials via the lazy flow import", async () => {
+	it("does not resolve a stored anthropic oauth credential: subscriptions use the Agent SDK lane (#3259)", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("anthropic", async () => ({
 			type: "oauth",
@@ -159,8 +159,7 @@ describe("OAuth through Models.getAuth (lazy load chain)", () => {
 
 		const model = models.getModels("anthropic")[0];
 		const result = await models.getAuth(model.provider);
-		expect(result?.auth.apiKey).toBe("oauth-access-token");
-		expect(result?.source).toBe("OAuth");
+		expect(result?.auth.apiKey).not.toBe("oauth-access-token");
 	});
 
 	it("resolves stored github-copilot oauth credentials including per-credential baseUrl", async () => {

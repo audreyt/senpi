@@ -23,7 +23,20 @@ const CLOCK_RE =
 	/\b(?:resets?|try again)\s+(?:at\s+|on\s+)?(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\b\.?(?:\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*)\))?/i;
 
 export function usageLimitResetMs(text: string, nowMs: number): number | undefined {
-	return fromJsonFields(text, nowMs) ?? fromRelativeProse(text) ?? fromClockProse(text, nowMs);
+	return usageLimitReset(text, nowMs)?.ms;
+}
+
+/** The reset with its kind: `absolute` names a moment (resets_at, "resets 3pm"); `relative` a duration. */
+export function usageLimitReset(
+	text: string,
+	nowMs: number,
+): { readonly ms: number; readonly kind: "absolute" | "relative" } | undefined {
+	const json = fromJsonFields(text, nowMs);
+	if (json !== undefined) return { ms: json, kind: "absolute" };
+	const relative = fromRelativeProse(text);
+	if (relative !== undefined) return { ms: relative, kind: "relative" };
+	const clock = fromClockProse(text, nowMs);
+	return clock === undefined ? undefined : { ms: clock, kind: "absolute" };
 }
 
 function fromJsonFields(text: string, nowMs: number): number | undefined {

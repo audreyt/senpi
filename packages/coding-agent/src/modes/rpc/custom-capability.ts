@@ -43,6 +43,13 @@ export const QUESTION_CAPABILITY = "question";
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 
 /**
+ * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
+ * asking connection holds and replies only once that is done, so a short-lived client can return knowing
+ * no other connection will still see it attached (senpi#3238).
+ */
+export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
+
+/**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's
  * extensions as `pi.sessionContext`, and republishes it on `list_sessions { include_workers: true }`.
  */
@@ -54,6 +61,13 @@ export const SESSION_CONTEXT_CAPABILITY = "session_context";
  * worker session's lifecycle records on the connections attached to it.
  */
 export const SESSION_KIND_CAPABILITY = "session_kind";
+
+/**
+ * Host capability: `subscribe_sessions` / `unsubscribe_sessions` (the `session_status` stream), a real
+ * `session_opened` per created session, `set_session_context`, and one `loaded_surfaces_changed` per
+ * connection per inventory digest.
+ */
+export const SESSION_STATUS_CAPABILITY = "session_status";
 
 /**
  * HOST capability: this host honors `open_session.auto_title`, so a session can opt
@@ -159,3 +173,6 @@ export function buildCustomUnsupportedRequest(
 		extensionName: name,
 	};
 }
+
+/** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
+export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";

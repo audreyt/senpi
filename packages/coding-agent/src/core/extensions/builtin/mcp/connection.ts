@@ -102,19 +102,24 @@ export class ServerConnection {
 		if (this.#pendingConnect) return this.#pendingConnect;
 
 		const generation = this.#generation;
-		this.#pendingConnect = this.#openConnection(generation).finally(() => {
+		let connection: McpTransportConnection;
+		try {
+			connection = this.#createTransportConnection();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		this.#pendingConnect = this.#openConnection(connection, generation).finally(() => {
 			if (this.#pendingConnect !== undefined && generation === this.#generation) this.#pendingConnect = undefined;
 		});
+		// Emit "connecting" only after the single-flight promise is published, so a listener that calls
+		// connect() joins this attempt instead of starting a second one.
+		if (generation === this.#generation) this.#setState("connecting");
 		return this.#pendingConnect;
 	}
 
-	// Building the transport is async (the MCP SDK loads on first use), so the
-	// single-flight promise is published before it resolves; "connecting" is
-	// entered only once the transport exists and this generation still owns it.
-	async #openConnection(generation: number): Promise<Client> {
-		const connection = await this.#createTransportConnection(generation);
+	// Own the connection before discovery so a concurrent dispose can abort the probe.
+	async #openConnection(connection: McpTransportConnection, generation: number): Promise<Client> {
 		this.#pendingConnection = connection;
-		if (generation === this.#generation && this.#state !== "disabled") this.#setState("connecting");
 		try {
 			return await this.#connectTransport(connection, generation);
 		} finally {
@@ -188,8 +193,8 @@ export class ServerConnection {
 		return () => this.#toolsListeners.delete(listener);
 	}
 
-	async #createTransportConnection(generation: number): Promise<McpTransportConnection> {
-		const connection = createMcpTransport({
+	#createTransportConnection(): McpTransportConnection {
+		return createMcpTransport({
 			authProvider: this.#authProvider,
 			config: this.#config,
 			env: this.#env,
@@ -197,7 +202,9 @@ export class ServerConnection {
 			logger: this.#logger,
 			serverName: this.serverName,
 		});
-		await connection.materialize();
+	}
+
+	#trackTransport(connection: McpTransportConnection, generation: number): void {
 		connection.transport.onclose = wrapAsync(
 			"connection.transport.onclose",
 			() => {
@@ -221,17 +228,22 @@ export class ServerConnection {
 			},
 			this.#sink,
 		);
-		return connection;
 	}
 
 	async #connectTransport(connection: McpTransportConnection, generation: number): Promise<Client> {
 		try {
+			await connection.materialize();
+			this.#trackTransport(connection, generation);
 			await connectMcpTransport(connection);
 		} catch (error) {
 			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
 			await this.#shutdown(connection);
 			if (generation !== this.#generation || this.#state === "disabled") {
 				throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
+			}
+			if (error instanceof ConnectError && error.phase === "modern-stdio") {
+				this.markDegraded(error);
+				throw error;
 			}
 			if (isMcpNeedsAuthError(error)) {
 				const authError = error instanceof Error ? error : new Error(String(error));

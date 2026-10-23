@@ -222,6 +222,22 @@ class PendingMessageQueue {
 		this.messages = [...messages, ...this.messages];
 	}
 
+	/** Remove this exact message object; false when it is no longer queued (already drained). */
+	remove(message: AgentMessage): boolean {
+		const index = this.messages.indexOf(message);
+		if (index === -1) return false;
+		this.messages.splice(index, 1);
+		return true;
+	}
+
+	/** Swap this exact message object for another in place; false when it is no longer queued. */
+	replace(message: AgentMessage, next: AgentMessage): boolean {
+		const index = this.messages.indexOf(message);
+		if (index === -1) return false;
+		this.messages[index] = next;
+		return true;
+	}
+
 	clear(): void {
 		this.messages = [];
 		this.clearGeneration++;
@@ -384,6 +400,16 @@ export class Agent {
 	/** Queue a message to run only after the agent would otherwise stop. */
 	followUp(message: AgentMessage): void {
 		this.followUpQueue.enqueue(message);
+	}
+
+	/** Remove one queued steering or follow-up message by identity; false once it was drained into a turn. */
+	removeQueuedMessage(message: AgentMessage): boolean {
+		return this.steeringQueue.remove(message) || this.followUpQueue.remove(message);
+	}
+
+	/** Replace one queued message by identity, keeping its place; false once it was drained into a turn. */
+	replaceQueuedMessage(message: AgentMessage, next: AgentMessage): boolean {
+		return this.steeringQueue.replace(message, next) || this.followUpQueue.replace(message, next);
 	}
 
 	/** Remove all queued steering messages. */

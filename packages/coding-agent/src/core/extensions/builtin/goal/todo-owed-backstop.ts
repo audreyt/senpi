@@ -13,7 +13,7 @@ import { describeAskNowNext, getLatestTodoStateFromBranchEntries } from "../todo
 import { didAgentEndCleanly } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
-import type { Goal } from "./types.ts";
+import { type Goal, goalDisplayStatus } from "./types.ts";
 
 export const TODO_OWED_CUSTOM_TYPE = "senpi.todo-owed";
 export const TODO_OWED_REMINDER_EVENT = "todo_owed_reminder";
@@ -32,11 +32,9 @@ export type TodoOwedSuppression =
 	| "non-interactive"
 	| "not-clean"
 	| "length"
-	| "pending-messages"
-	| "active-goal"
-	| "continuation-pending"
 	| "no-open-tasks"
-	| "wake-source"
+	| "waiting"
+	| "goal-stopped"
 	| "ask-user-call"
 	| "question"
 	| "cap";
@@ -47,7 +45,8 @@ export type TodoOwedReminderEvent = {
 	openTasks: number;
 	now: string;
 	next: string;
-	reason: "delivered" | "capped";
+	reason: "delivered" | "capped" | "waiting";
+	sources?: readonly string[];
 };
 
 export type TodoOwedInput = {
@@ -56,7 +55,18 @@ export type TodoOwedInput = {
 	readonly goal: Goal | null;
 	readonly continuationPending: boolean;
 	readonly hasActiveWakeSources: boolean;
+	readonly wakeSourceNames?: readonly string[];
 };
+
+export function collectOnDutySources(input: TodoOwedInput): string[] {
+	const sources: string[] = [];
+	if (input.hasActiveWakeSources) sources.push(...(input.wakeSourceNames ?? ["wake-source"]));
+	// A goal whose continuation stopped will not wake on its own; it is not waiting on anything.
+	if (input.goal && goalDisplayStatus(input.goal) === "active") sources.push("active-goal");
+	if (input.continuationPending) sources.push("continuation-pending");
+	if (input.ctx.hasPendingMessages()) sources.push("pending-messages");
+	return [...new Set(sources)];
+}
 
 export function buildTodoOwedReminder(anchors: { ask: string; now: string; next: string }, final: boolean): string {
 	const prefix = final ? TODO_OWED_SECOND_PREFIX : "";
@@ -112,7 +122,7 @@ function readTurnEndBackstopSetting(ctx: ExtensionContext): boolean {
  * carries no `parentSession`), so they pass the main-session clause and are treated as main.
  */
 export function firstTodoOwedSuppression(input: TodoOwedInput): Exclude<TodoOwedSuppression, "cap"> | undefined {
-	const { ctx, event, goal } = input;
+	const { ctx, event } = input;
 	// Optional call: session managers that predate `getHeader` (and the goal test
 	// harness fakes) expose no parent tag, which reads as "main session" - the same
 	// treatment untagged child sessions get today.
@@ -120,11 +130,11 @@ export function firstTodoOwedSuppression(input: TodoOwedInput): Exclude<TodoOwed
 	if (NON_INTERACTIVE_MODES.has(ctx.mode)) return "non-interactive";
 	if (event.aborted === true || !didAgentEndCleanly(event.messages)) return "not-clean";
 	if (lastAssistantMessage(event.messages)?.stopReason === "length") return "length";
-	if (ctx.hasPendingMessages()) return "pending-messages";
-	if (goal?.status === "active") return "active-goal";
-	if (input.continuationPending) return "continuation-pending";
 	if (openTodoTaskContents(ctx.sessionManager.getBranch()).length === 0) return "no-open-tasks";
-	if (input.hasActiveWakeSources) return "wake-source";
+	if (collectOnDutySources(input).length > 0) return "waiting";
+	// A stopped goal already shows its own stop notice and resume action; a todo nudge or a
+	// "waiting" footer on top of it would contradict that notice.
+	if (input.goal?.status === "active" && input.goal.continuationStoppedAt !== undefined) return "goal-stopped";
 	if (calledAskUser(event.messages)) return "ask-user-call";
 	if (endsWithQuestion(assistantText(lastAssistantMessage(event.messages)))) return "question";
 	if (!readTurnEndBackstopSetting(ctx)) return "disabled";
@@ -159,7 +169,23 @@ export class TodoOwedBackstop {
 	afterAgentEnd(input: TodoOwedInput): void {
 		const suppression = firstTodoOwedSuppression(input);
 		if (suppression !== undefined) {
-			this.#logSuppression(input.ctx, suppression);
+			const sources = suppression === "waiting" ? collectOnDutySources(input) : undefined;
+			this.#logSuppression(input.ctx, suppression, sources);
+			if (sources !== undefined) {
+				const { ctx } = input;
+				const branch = ctx.sessionManager.getBranch();
+				const anchors = describeAskNowNext(getLatestTodoStateFromBranchEntries(branch));
+				ctx.ui.setStatus("todo-waiting", `waiting: ${sources.join(", ")}`);
+				this.#emit({
+					sessionId: ctx.sessionManager.getSessionId(),
+					chainCount: this.#remindersThisChain,
+					openTasks: openTodoTaskContents(branch).length,
+					now: anchors.now,
+					next: anchors.next,
+					reason: "waiting",
+					sources,
+				});
+			}
 			return;
 		}
 		const { ctx } = input;
@@ -209,8 +235,11 @@ export class TodoOwedBackstop {
 		this.#pi.events.emit(TODO_OWED_REMINDER_EVENT, event);
 	}
 
-	#logSuppression(ctx: ExtensionContext, reason: TodoOwedSuppression): void {
+	#logSuppression(ctx: ExtensionContext, reason: TodoOwedSuppression, sources?: readonly string[]): void {
 		this.#logger ??= createSessionLogger(ctx.agentDir);
-		this.#logger.debug("todo_owed_backstop_suppressed", { reason });
+		this.#logger.debug("todo_owed_backstop_suppressed", {
+			reason,
+			...(sources === undefined ? {} : { source: sources.join(", ") }),
+		});
 	}
 }

@@ -10,6 +10,7 @@ import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { type RpcSessionIdlePolicy, SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../helpers/fake-session-base.ts";
 import { assistantMessage } from "./rpc-inprocess-host-metrics.ts";
 
 /**
@@ -137,8 +138,7 @@ function inProcessRuntimeFactory(): {
 		});
 		return {
 			session: {
-				sessionManager: manager,
-				agentDir: options.agentDir,
+				...fakeSessionBase({ ...options, sessionManager: manager }),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,
@@ -178,7 +178,7 @@ function inProcessRuntimeFactory(): {
 						hasActiveWakeSource: false,
 					};
 				},
-				get isSessionBusy() {
+				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },

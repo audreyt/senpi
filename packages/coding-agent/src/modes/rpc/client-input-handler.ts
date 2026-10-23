@@ -1,5 +1,5 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
-import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
+import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
@@ -10,6 +10,16 @@ import {
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+
+type PromptPathOptions = Pick<
+	PromptOptions,
+	| "streamingBehavior"
+	| "thinkingLevel"
+	| "sessionTitlePrompt"
+	| "expandPromptTemplates"
+	| "unknownCommandAsText"
+	| "enqueueOrder"
+>;
 
 type InputOutput = {
 	readonly output: (record: object) => void;
@@ -42,6 +52,38 @@ export async function handleClientInput(
 		};
 		const admission = await clientInputContext.run(clientMessageIdentity(command), () =>
 			admissions.admit(command, async (hooks) => {
+				// `prompt` and `steer`/`follow_up { whenIdle: "start" }` share one path: the session decides
+				// atomically whether the input starts a turn or joins the running one.
+				const promptPath = (options: PromptPathOptions): Promise<PromptDisposition> => {
+					const accepted = Promise.withResolvers<PromptDisposition>();
+					let preflightSucceeded = false;
+					let acceptedAdmission: ClientMessageAdmission | undefined;
+					const call = session
+						.prompt(command.message, {
+							...clientMessageIdentity(command),
+							images: command.images,
+							...options,
+							source: "rpc",
+							onQueuedInput: hooks.queued,
+							promptDisposition: (next) => {
+								disposition = next;
+								acceptedAdmission = hooks.accepted(next);
+							},
+							preflightResult: (succeeded) => {
+								if (succeeded && disposition !== undefined) {
+									preflightSucceeded = true;
+									accepted.resolve(disposition);
+									respond(acceptedAdmission);
+								}
+							},
+						})
+						.catch((error: unknown) => {
+							if (!preflightSucceeded) accepted.reject(error);
+						});
+					io.promptCalls.add(call);
+					void call.finally(() => io.promptCalls.delete(call));
+					return accepted.promise;
+				};
 				switch (command.type) {
 					case "prompt": {
 						if (
@@ -53,43 +95,23 @@ export async function handleClientInput(
 								"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
 							);
 						}
-						const accepted = Promise.withResolvers<PromptDisposition>();
-						let preflightSucceeded = false;
-						let acceptedAdmission: ClientMessageAdmission | undefined;
-						const call = session
-							.prompt(command.message, {
-								...clientMessageIdentity(command),
-								images: command.images,
-								streamingBehavior: command.streamingBehavior,
-								thinkingLevel: command.thinkingLevel,
-								sessionTitlePrompt: command.sessionTitlePrompt,
-								expandPromptTemplates: command.expandPromptTemplates,
-								unknownCommandAsText: command.unknownCommandAsText,
-								source: "rpc",
-								onQueuedInput: hooks.queued,
-								promptDisposition: (next) => {
-									disposition = next;
-									acceptedAdmission = hooks.accepted(next);
-								},
-								preflightResult: (succeeded) => {
-									if (succeeded && disposition !== undefined) {
-										preflightSucceeded = true;
-										accepted.resolve(disposition);
-										respond(acceptedAdmission);
-									}
-								},
-							})
-							.catch((error: unknown) => {
-								if (!preflightSucceeded) accepted.reject(error);
-							});
-						io.promptCalls.add(call);
-						void call.finally(() => io.promptCalls.delete(call));
-						return accepted.promise;
+						return promptPath({
+							streamingBehavior: command.streamingBehavior,
+							thinkingLevel: command.thinkingLevel,
+							sessionTitlePrompt: command.sessionTitlePrompt,
+							expandPromptTemplates: command.expandPromptTemplates,
+							unknownCommandAsText: command.unknownCommandAsText,
+						});
 					}
 					case "steer":
 					case "follow_up": {
+						if (command.whenIdle === "start")
+							return promptPath({
+								streamingBehavior: command.type === "steer" ? "steer" : "followUp",
+								enqueueOrder: command.enqueueOrder,
+							});
 						const options = {
-							...clientMessageIdentity(command),
+							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
 							source: "rpc" as const,
 							onQueuedInput: hooks.queued,

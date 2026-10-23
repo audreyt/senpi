@@ -73,7 +73,7 @@ ${buildHandoffSection({ surface: context.surface })}
 
 ## Output
 
-You are the human surface: the final message is ${context.surface === "chat" ? "the answer itself, leading" : "for work, the Handoff block, whose For you slot leads"} with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface !== "terminal" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
+You are the human surface: the final message is ${context.surface === "chat" ? "the answer itself, leading" : "for a change, the Handoff block, whose For you slot leads"} with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, ${context.surface !== "terminal" ? "anything left unverified that no other evidence covers" : "what you could not verify and why"}, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
 
 ## Stop Goal
 

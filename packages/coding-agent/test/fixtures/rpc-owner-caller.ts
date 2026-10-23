@@ -7,7 +7,7 @@ import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { supervisorLaunch } from "../helpers/rpc-generation-support.ts";
 import { MOCK_MODEL, MOCK_PROVIDER } from "../helpers/rpc-hermetic.ts";
 
-const [socket, agentDir, ownership = "caller"] = process.argv.slice(2);
+const [socket, agentDir, ownership = "caller", extension, idleExitMs = "60000"] = process.argv.slice(2);
 if (!socket || !agentDir) throw new Error("socket and agentDir required");
 const spawn = childProcess.spawn;
 mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: SpawnOptions) => {
@@ -27,7 +27,7 @@ const options = {
 	socket,
 	agentDir,
 	...(ownership === "caller" ? { owner: "caller" as const } : {}),
-	policy: { idleExitMs: 60_000 },
+	policy: { idleExitMs: Number(idleExitMs) },
 	hostArgs: [
 		"--no-extensions",
 		"--no-skills",
@@ -36,6 +36,7 @@ const options = {
 		MOCK_PROVIDER,
 		"--model",
 		MOCK_MODEL,
+		...(extension ? ["--extension", extension] : []),
 	],
 	_test: { launch: supervisorLaunch },
 };

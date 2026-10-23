@@ -1,6 +1,10 @@
 import type { ProviderDiagnostic } from "../provider-diagnostic.ts";
 import { attachProviderDiagnostic } from "./provider-diagnostic-carrier.ts";
-import { classifyProviderFailure } from "./provider-diagnostic-vocabulary.ts";
+import {
+	buildProviderDiagnostic,
+	categoryForTransportCode,
+	classifyProviderFailure,
+} from "./provider-diagnostic-vocabulary.ts";
 
 /** Largest SSE error envelope parsed for classification at all. */
 const SSE_ERROR_ENVELOPE_MAX_BYTES = 8_192;
@@ -71,6 +75,45 @@ export function openAICompatibleProviderDiagnosticFromError(error: unknown): Pro
 }
 
 /**
+ * A connection failure carries no HTTP status; it proves only that the request got
+ * no provider answer. Reads the error's own `code`, then `cause.code` (fetch
+ * wraps the socket error), against a closed allowlist. Messages are never read.
+ */
+/** How many `cause` links a transport code is looked for through (the error itself counts as one). */
+const TRANSPORT_CAUSE_DEPTH = 4;
+
+export function transportProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
+	try {
+		if (!(error instanceof Error)) return undefined;
+		// SDK errors wrap the runtime's error: Bun puts the code one cause down, Node's fetch two
+		// (SDK error -> TypeError "fetch failed" -> { code }). Walk a bounded chain, reading only `code`;
+		// the SDK's own connection error class name is the fallback when no link carries a code.
+		let current: unknown = error;
+		let sdkConnectionError: string | undefined;
+		for (let depth = 0; depth < TRANSPORT_CAUSE_DEPTH && (isRecord(current) || current instanceof Error); depth++) {
+			const code = Reflect.get(current, "code");
+			if (typeof code === "string" && categoryForTransportCode(code) !== undefined)
+				return buildProviderDiagnostic({ category: "network", code, evidence: "structured_transport" });
+			// The SDKs keep `name` as "Error"; their class is what says connection error.
+			for (const name of current instanceof Error ? [current.name, current.constructor.name] : []) {
+				if (sdkConnectionError === undefined && categoryForTransportCode(name) !== undefined)
+					sdkConnectionError = name;
+			}
+			current = Reflect.get(current, "cause");
+		}
+		return sdkConnectionError === undefined
+			? undefined
+			: buildProviderDiagnostic({ category: "network", code: sdkConnectionError, evidence: "structured_transport" });
+	} catch {
+		return undefined;
+	}
+}
+
+function classifyWithTransport(classify: ErrorClassifier, error: unknown): ProviderDiagnostic | undefined {
+	return classify(error) ?? transportProviderDiagnosticFromError(error);
+}
+
+/**
  * Await one provider transport call and, if it rejects, attach the classifier's
  * verdict to the rejection. Only errors raised by the wrapped call are
  * classified, so caller callbacks and local failures never gain provider provenance.
@@ -79,7 +122,8 @@ export async function awaitProviderTransport<T>(request: () => Promise<T>, class
 	try {
 		return await request();
 	} catch (error) {
-		if (typeof error === "object" && error !== null) attachProviderDiagnostic(error, classify(error));
+		if (typeof error === "object" && error !== null)
+			attachProviderDiagnostic(error, classifyWithTransport(classify, error));
 		throw error;
 	}
 }
@@ -92,7 +136,8 @@ export async function* iterateProviderTransport<T>(
 	try {
 		yield* source;
 	} catch (error) {
-		if (typeof error === "object" && error !== null) attachProviderDiagnostic(error, classify(error));
+		if (typeof error === "object" && error !== null)
+			attachProviderDiagnostic(error, classifyWithTransport(classify, error));
 		throw error;
 	}
 }

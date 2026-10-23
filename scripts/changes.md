@@ -1,3 +1,95 @@
+## 2026-10-17 - Seed Elorian credentials in development environments
+
+### What changed
+
+- `scripts/devenv-setup.mjs`: recognizes `ELORIAN_API_KEY` when seeding the local development environment.
+
+### Why
+
+- `scripts/devenv-setup.mjs`: provider credentials must stay synchronized with the devcontainer and QA environment reference.
+
+### Why an extension could not handle it
+
+- `scripts/devenv-setup.mjs`: development bootstrap runs outside the agent.
+
+### Expected merge conflict zones
+
+- `scripts/devenv-setup.mjs`: `PROVIDER_KEYS`.
+
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
+## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
+
+### What changed
+
+- `scripts/release.mjs`: `runForcedTests` (the `--force-tests` path) runs the suite through `runForcedTestSuite` from `release-test-gate.mjs` instead of `runCommand("npm", ["test"], { CI: "1" })`. The suite runs under a 110-minute budget as the leader of its own process group (`release-forced-test-supervisor.mjs`), and a timeout kills the whole group and fails with a named error. The default path, which waits for the release commit's green "Check and test" run, is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: when GitHub-hosted macOS runners are backlogged, the release commit's "Check and test" never reports and the release fails after 40 minutes without publishing (two v2026.10.16 attempts on 2026-10-15). `--force-tests` is the existing fallback, but the workflow could not pass it, and the in-job suite once hung silently in packages/ai vitest until the job timeout killed it (senpi#2291). The budget is about twice the serial cost estimated from green main CI (the ubuntu Test jobs sum to 56.8-62.7 min).
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: the release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `runForcedTests` and the `release-test-gate.mjs` import; the `release` job's `timeout-minutes` and inputs in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- senpi#3378: `calculateCost` in `models.ts` selects the dated card, which brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+- The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
 
 ### What changed
@@ -125,6 +217,24 @@ Release orchestration is repository tooling.
 ### Expected merge conflict zones
 
 - `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
 
 ## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
 

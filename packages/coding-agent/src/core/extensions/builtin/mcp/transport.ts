@@ -6,7 +6,7 @@ import type { McpElicitationUiProvider } from "./elicitation.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
-import { type McpMaterializedTransport, type McpTransportSpec, materializeMcpTransport } from "./transport-sdk.ts";
+import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
 import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
 
 export type McpTransportConnection = {
@@ -75,6 +75,7 @@ export async function connectMcpTransport(connection: McpTransportConnection): P
 		});
 	} catch (error) {
 		await shutdownMcpTransport(connection).catch(() => undefined);
+		if (error instanceof ConnectError && error.phase === "modern-stdio") throw error;
 		if (timedOut) {
 			throw new TimeoutError(
 				`MCP server ${connection.serverName} timed out during connect after ${connection.connectTimeoutMs}ms`,
@@ -160,6 +161,7 @@ function createConnection(
 	const asyncErrorSink: McpAsyncErrorSink = { logger: options.logger };
 	let materialized: McpMaterializedTransport | undefined;
 	let pending: Promise<McpMaterializedTransport> | undefined;
+	const abort = new AbortController();
 	let lastRootPid: number | null = null;
 	const captureRootPid = (): void => {
 		lastRootPid = materialized?.readPid() ?? lastRootPid;
@@ -180,6 +182,7 @@ function createConnection(
 			return built().client;
 		},
 		closeTransport: async (): Promise<void> => {
+			abort.abort();
 			await materialized?.close();
 		},
 		connectTimeoutMs,
@@ -188,14 +191,25 @@ function createConnection(
 			return materialized?.readPid() ?? lastRootPid;
 		},
 		materialize: async (): Promise<void> => {
-			pending ??= materializeMcpTransport({
-				elicitationUiProvider: options.elicitationUiProvider,
-				logger: options.logger,
-				onStart: captureRootPid,
-				sink: asyncErrorSink,
-				spec,
-			});
+			pending ??= import("./modern/dispatch.ts").then(({ materializeNegotiatedTransport }) =>
+				materializeNegotiatedTransport(
+					{
+						elicitationUiProvider: options.elicitationUiProvider,
+						logger: options.logger,
+						onStart: captureRootPid,
+						sink: asyncErrorSink,
+						spec,
+					},
+					options.serverName,
+					connectTimeoutMs,
+					abort.signal,
+				),
+			);
 			materialized = await pending;
+			if (abort.signal.aborted) {
+				await materialized.close();
+				abort.signal.throwIfAborted();
+			}
 		},
 		serverName: options.serverName,
 		get transport(): Transport {

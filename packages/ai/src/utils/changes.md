@@ -1,3 +1,83 @@
+## 2026-10-15 - Connection failures classify as network from structured transport codes (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForTransportCode` (closed allowlist: ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, EAI_AGAIN, EPIPE, UND_ERR_SOCKET, UND_ERR_CONNECT_TIMEOUT, UND_ERR_HEADERS_TIMEOUT, UND_ERR_BODY_TIMEOUT, UND_ERR_CLOSED, and the SDK class names APIConnectionError / APIConnectionTimeoutError -> `network`); `network` is a recognized category.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `transportProviderDiagnosticFromError` walks up to 4 links of the `cause` chain reading only `code` (Node's fetch puts it two causes below the SDK error, Bun one), and falls back to the SDK connection error's class name (`name` or `constructor.name`) when no link has a code; never the message. The transport wrappers use it only when the adapter's classifier finds nothing.
+
+### Why
+
+A dropped connection had no category, so clients could not say "check connectivity".
+
+### Why an extension could not handle it
+
+The diagnostic is minted inside the provider transport wrappers in `pi-ai`, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `awaitProviderTransport` and `iterateProviderTransport`.
+
+## 2026-10-14 - Thinking-mode refusal of a forced tool_choice is retried without it (senpi#3324)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: the "does not support … tool_choice" refusal pattern accepts "this" and "the" besides "forced", so opencode-go's DeepSeek thinking models' `400 … Thinking mode does not support this tool_choice` is recognised by `isForcedToolChoiceUnsupportedError`. `sendWithForcedToolChoiceFallback` then retries once without `tool_choice`, and does not remember the refusal because it names thinking.
+
+### Why
+
+- The wording matched none of the six refusal patterns, and the message names no tool, so the forced first-turn `todo` choice was fatal. Subagents on `opencode-go/deepseek-v4.1-flash:high` died at launch (0 tool calls, about 1.6 s) whenever the upstream refused (senpi#3324, measured 1 to 2 of 3 launches by the reporter).
+
+### Why an extension could not handle it
+
+- The forced-choice retry runs inside the provider request path that every API shares; no hook sees the refusal before it is thrown.
+
+### Expected merge conflict zones
+
+- LOW: the third pattern in `isForcedToolChoiceUnsupportedError`.
+
+## 2026-10-14 - Anthropic third-party billing rejection is terminal account exhaustion with its own explanation (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `ANTHROPIC_THIRD_PARTY_BILLING_MARKER` ("Third-party apps now draw from your extra usage") joins `QUOTA_EXHAUSTION_PATTERNS`, so the 400 classifies as non-retryable account exhaustion; `isAnthropicThirdPartyBillingMessage()` exposes the match.
+- `packages/ai/src/utils/provider-failure-description.ts`: `describeProviderFailureForUser()` explains that rejection by billing path: on `anthropic` it names the subscription login ("Anthropic Subscription (Claude Pro/Max)" via `/login`), extra usage at https://claude.ai/settings/usage, or `/model`; on `anthropic-subscription` it offers extra usage or `/model` only.
+
+### Why
+
+- The 400 matched no classifier, so the hard-error fallback walked Opus 5.5 -> 5 -> 4.8 -> 4.6 on the same credential and every hop drew the same rejection (five requests, measured against a local mock), and the user saw only the raw body (senpi#3259).
+
+### Why an extension could not handle it
+
+- Retry classification and the user-facing failure text are shared by every provider and consumed inside the session retry/fallback engine; there is no hook between a provider error and its classification.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `QUOTA_EXHAUSTION_PATTERNS` and the new constant above it in `retry.ts`; the import block and the first branch of `describeProviderFailureForUser()`.
+
+## 2026-10-13 - Every typeless tool-parameter root gets `type: "object"` (senpi#3245, senpi#3250)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `ensureRootObjectSchema` now adds `type: "object"` to a typeless root
+  `allOf` and to an `anyOf`/`oneOf` union that cannot merge because a branch is not an object shape. Both previously
+  went out typeless. The combiner stays beside the added type. (A typeless `$ref` root already got `type: "object"`
+  before this change.) This supersedes the 2026-08-05 rule in `packages/ai/src/changes.md` that scalar and mixed root
+  unions are left typeless.
+
+### Why
+
+DeepSeek and gateways forwarding to it reject every tool whose root parameters schema has no `type`
+(`got 'type: null'`), so an unmergeable root union failed every tool call. Tool arguments are always JSON objects and
+are validated locally against the original schema, so the stricter wire schema costs nothing in practice.
+
+### Why an extension could not handle it
+
+Tool-parameter normalization runs inside the OpenAI-compatible request builder after extensions hand over tools.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: the tail of `ensureRootObjectSchema` and its doc comment.
+
 ## 2026-10-09 - Restore utils-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

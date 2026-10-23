@@ -167,7 +167,9 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
-	const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+	// A shared runtime's providers register into its own store: read that one, as a session that
+	// builds its runtime does (senpi#3434).
+	const authStorage = options.modelRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const runtimePromise =
 		options.modelRuntime !== undefined
 			? Promise.resolve(options.modelRuntime)

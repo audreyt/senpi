@@ -78,9 +78,9 @@ describe("Claude SDK OAuth account affinity", () => {
 			expect((error as AllAccountsBlockedError).soonestUnblockAt).toBe(10_000);
 		}
 
-		const authBlocked = accounts.map((account) => ({ ...account, blockReason: "auth_error" }));
-		expect(() => selectAccount(authBlocked, { sessionId: "auth", now: Number.MAX_SAFE_INTEGER })).toThrow(
-			AllAccountsBlockedError,
-		);
+		// An auth block lasts until its re-probe time (senpi#3264), then the account is offered again.
+		const authBlocked = accounts.map((account) => ({ ...account, blockReason: "auth_error", blockedUntil: 20_000 }));
+		expect(() => selectAccount(authBlocked, { sessionId: "auth", now: 1_000 })).toThrow(AllAccountsBlockedError);
+		expect(selectAccount(authBlocked, { sessionId: "auth", now: 20_000 }).name).toBeDefined();
 	});
 });

@@ -180,6 +180,19 @@ export class SessionEventFanout {
 		for (const { actor } of this.connections.values()) actor.enqueue(line);
 	}
 
+	connectionIds(): readonly string[] {
+		return [...this.connections.keys()];
+	}
+
+	attachedConnections(sessionId: string): readonly string[] {
+		return [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId));
+	}
+
+	/** Pending `question` frames a session has asked and nobody answered yet. */
+	pendingQuestionCount(sessionId: string): number {
+		return this.pendingQuestions.get(sessionId)?.size ?? 0;
+	}
+
 	/** Deliver one line to the connections attached to a session, never to the rest of the fanout. */
 	deliverToSession(sessionId: string, line: string): void {
 		for (const [id, { actor }] of this.connections)

@@ -11,6 +11,7 @@ import {
 	isDeepseekV4FlashModel,
 	isDeepseekV4ProModel,
 	isDeepseekV41FlashModel,
+	isGemini4ArgonModel,
 	isGlm52Model,
 	isGlm53Model,
 	isGpt6FamilyModel,
@@ -105,6 +106,9 @@ export function resolvePresetName(input: {
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
 	}
+	if (isGemini4ArgonModel(model)) {
+		return "gemini-4-argon";
+	}
 	return undefined;
 }
 
@@ -144,6 +148,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "xai", modelID: "grok-4.7", preset: "grok-4.7" },
 	{ providerID: "xai", modelID: "grok-4.6", preset: "grok-4.6" },
 	{ providerID: "xai", modelID: "grok-4.5", preset: "grok-4.5" },
+	{ providerID: "google", modelID: "gemini-4-argon", preset: "gemini-4-argon" },
 ];
 
 // Presets a model id can auto-resolve to. gpt-5 is a manual-only preset (settings union +
@@ -179,4 +184,5 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"claude-opus-4-7",
 	"claude-opus-4-6",
 	"claude-opus-4-5",
+	"gemini-4-argon",
 ];

@@ -1,3 +1,100 @@
+## 2026-10-17 - Discover Elorian API credentials
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: maps `elorian` to `ELORIAN_API_KEY`.
+- `packages/ai/src/types.ts`: includes Elorian in the known provider union.
+
+### Why
+
+- `packages/ai/src/env-api-keys.ts`: Elorian credentials must participate in provider discovery and credential slots.
+- `packages/ai/src/types.ts`: built-in provider enumeration must remain assignable to the public provider type.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/env-api-keys.ts`: the built-in credential mapping is read before extensions load.
+- `packages/ai/src/types.ts`: the public provider union is a compile-time contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: provider environment map.
+- `packages/ai/src/types.ts`: `KnownProvider`.
+
+## 2026-10-14 - Cursor `gemini-4-argon` 1M context/1M output and `gemini-3.8-flash` 1M context capabilities
+
+### What changed
+
+- `packages/ai/src/cursor/model-capabilities.ts`: `CursorModelCapability` adds optional `maxTokens?: number`; `CURSOR_MODEL_CAPABILITIES` adds `gemini-4-argon` (`window: 1_048_576`, `maxTokens: 1_000_000`, `parameterOrder: ["effort"]`, `low`/`medium`/`high`) and `gemini-3.8-flash` (`window: 1_048_576`, `parameterOrder: ["effort"]`, `low`/`medium`/`high`).
+- `packages/ai/src/cursor/catalog-grouping.ts`: `CursorCatalogEntry` carries optional `maxTokens` from `CURSOR_MODEL_CAPABILITIES`.
+- `packages/ai/src/cursor/store-migration.ts`: `entryToModel` prefers `entry.maxTokens`, and `regroupStoredCursorModels` upgrades stored derived identities whose fallback `contextWindow` (`200_000`) or `maxTokens` predates a capability table entry.
+
+### Why
+
+Cursor's `GetUsableModels` discovery returns no context window and a uniform 64,000 `maxTokens` placeholder, causing `cursor/gemini-4-argon` (1,048,576 context / 1,000,000 output) and `cursor/gemini-3.8-flash` (1,048,576 context) to fall back to `200K` context and `64K` max output.
+
+### Why an extension could not handle it
+
+Cursor capability normalization and stored-model migration live in `packages/ai/src/cursor` below the extension layer.
+
+### Expected merge conflict zones
+
+- `CURSOR_MODEL_CAPABILITIES` in `packages/ai/src/cursor/model-capabilities.ts`, `normalizeCursorCatalog` in `packages/ai/src/cursor/catalog-grouping.ts`, and `regroupStoredCursorModels` in `packages/ai/src/cursor/store-migration.ts`.
+## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: `ProviderDiagnosticCategory` adds `network`; `ProviderDiagnosticEvidence` adds `structured_transport`; `sanitizeProviderDiagnostic` accepts a transport diagnostic only with no status and a code from the allowlist.
+
+### Why
+
+See `utils/changes.md` (senpi#3228): connection failures need a category clients can act on.
+
+### Why an extension could not handle it
+
+The diagnostic type and its boundary validation are part of the `pi-ai` contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/provider-diagnostic.ts`: the category and evidence unions and `sanitizeProviderDiagnostic`.
+
+## 2026-10-15 - Bill usage with the cost card in force (senpi#3378)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCostCard` (the rates plus `tiers`) and `ModelCostEffectiveRate` (`effectiveFrom` plus a card); `ModelCost` gains optional `effectiveRates`.
+- `packages/ai/src/models.ts`: `calculateCost(model, usage, atMs = Date.now())` bills with `costCardAt(model.cost, atMs)` and takes the tiers from that card.
+- `packages/ai/src/index.ts`: re-exports the new fork file `model-cost.ts` (`costCardAt`).
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- `calculateCost` is the single billing function every wire adapter calls; an extension cannot change how a builtin adapter bills.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `calculateCost`, the `ModelCost` interface block in `types.ts`, and the export list in `index.ts`.
+
+## 2026-10-14 - Map-less generation-4 rows offer only the levels the provider accepts (senpi#3292 review)
+
+### What changed
+
+- `packages/ai/src/models.ts`: new `inferThinkingLevelMap` returns the row's own map, else the OpenAI inference, else `inferGoogleThinkingLevelMap` from the fork-only `packages/ai/src/google-thinking-generation.ts`. `getSupportedThinkingLevels` reads it, so a generation-4-or-later Google row without a `thinkingLevelMap` offers only `low`, `medium` and `high`, and `clampThinkingLevel` raises `off` and `minimal` to `low`.
+
+### Why
+
+Custom `models.json` and discovered rows usually carry no map. Before this, such a row still offered `off` (sent as a zero budget) and `minimal`, both rejected with HTTP 400; the review of #3293 found the fix only worked for rows that shipped a map.
+
+### Why an extension could not handle it
+
+Supported levels and clamping are computed in the core model runtime before any adapter or extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/ai/src/models.ts` and the line in `getSupportedThinkingLevels` that reads the inferred map.
+
 ## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
 
 ### What changed

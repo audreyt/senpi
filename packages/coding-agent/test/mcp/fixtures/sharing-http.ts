@@ -44,7 +44,12 @@ export async function sharingHttpFixture(port = 0) {
 				}
 			}
 			if (!session && req.method === "POST" && !id) {
-				const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
+				const transport = new StreamableHTTPServerTransport({
+					sessionIdGenerator: randomUUID,
+					onsessioninitialized: () => {
+						connects++;
+					},
+				});
 				const server = new Server(
 					{ name: "sharing-fixture", version: "1.0.0" },
 					{ capabilities: { tools: { listChanged: true }, resources: { subscribe: true }, logging: {} } },
@@ -74,7 +79,6 @@ export async function sharingHttpFixture(port = 0) {
 				});
 				await server.connect(transport);
 				session = { server, transport };
-				connects++;
 			}
 			if (!session) {
 				res.writeHead(404).end();

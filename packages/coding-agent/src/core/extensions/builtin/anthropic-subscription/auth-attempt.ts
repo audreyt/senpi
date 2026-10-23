@@ -1,3 +1,6 @@
+import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
+import { claudeWindowsFromSdkEvent } from "../../../subscription-limits/limit-windows.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { AccountSlot } from "./accounts.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionTokenInjection } from "./settings.ts";
@@ -53,8 +56,25 @@ export async function createAttemptMessages(
 	input: AttemptFactoryInput,
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
-	if (input.createAttempt) return retainedAttemptMessages(await input.createAttempt(auth));
+	if (input.createAttempt)
+		return recordingLimitWindows(retainedAttemptMessages(await input.createAttempt(auth)), auth);
 	const query = input.query({ prompt: input.prompt, options: auth.options });
 	input.onQuery?.(query);
-	return closingQueryMessages(query);
+	return recordingLimitWindows(closingQueryMessages(query), auth);
+}
+
+/** The SDK reports the account's limit windows as `rate_limit_event` messages: kept for that account (senpi#3370). */
+async function* recordingLimitWindows(
+	messages: AsyncIterable<SDKMessage>,
+	auth: AuthenticatedAttemptInput,
+): AsyncGenerator<SDKMessage> {
+	for await (const message of messages) {
+		if (message.type === "rate_limit_event")
+			subscriptionLimits.record(
+				ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+				auth.accountName,
+				claudeWindowsFromSdkEvent(message),
+			);
+		yield message;
+	}
 }

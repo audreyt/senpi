@@ -47,6 +47,7 @@ import {
 	toProviderNativeContent,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
+import { buildGoogleAuthOptions, resolveVertexProjectFromEnv } from "./google-vertex-env.ts";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -457,11 +458,6 @@ function baseUrlIncludesApiVersion(baseUrl: string): boolean {
 	}
 }
 
-function buildGoogleAuthOptions(env?: ProviderEnv): { keyFilename: string } | undefined {
-	const keyFilename = getProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env);
-	return keyFilename ? { keyFilename } : undefined;
-}
-
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 	const apiKey = options?.apiKey?.trim();
 	if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
@@ -475,10 +471,7 @@ function isPlaceholderApiKey(apiKey: string): boolean {
 }
 
 function resolveProject(options?: GoogleVertexOptions): string {
-	const project =
-		options?.project ||
-		getProviderEnvValue("GOOGLE_CLOUD_PROJECT", options?.env) ||
-		getProviderEnvValue("GCLOUD_PROJECT", options?.env);
+	const project = resolveVertexProjectFromEnv(options);
 	if (!project) {
 		throw new Error(
 			"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.",
