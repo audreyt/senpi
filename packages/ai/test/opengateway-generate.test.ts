@@ -45,7 +45,13 @@ afterEach(() => {
 });
 
 describe("fetchOpenGatewayModels", () => {
-	it("admits a model the gateway newly serves, sized and priced by the gateway", async () => {
+	it.each(["legacy", "versioned"])("admits a model sized and priced by the gateway (%s prices)", async (format) => {
+		const entries = priceTable({ "anthropic/claude-opus-6": { input: 5, output: 25, cacheRead: 0.5 } });
+		// Public price-table protocol: the versioned response wraps the unchanged route map in entries.
+		const prices =
+			format === "versioned"
+				? { priceVersion: "47db609f3074", currency: "USD", unit: "USD_PER_TOKEN", entries }
+				: entries;
 		stubFetch(
 			gatewayResponse([
 				{
@@ -66,7 +72,7 @@ describe("fetchOpenGatewayModels", () => {
 					},
 				},
 			}),
-			priceTable({ "anthropic/claude-opus-6": { input: 5, output: 25, cacheRead: 0.5 } }),
+			prices,
 		);
 
 		const [model] = await fetchOpenGatewayModels(() => {}, { strict: true });
@@ -276,6 +282,20 @@ describe("fetchOpenGatewayModels", () => {
 
 			expect(models.map((model) => model.id)).toEqual(["moonshotai/kimi-k3"]);
 		});
+
+		it.each([{}, { priceVersion: "empty", entries: {} }, { entries: [] }, { entries: null }])(
+			"rejects an empty or malformed price table in strict regeneration: %j",
+			async (prices) => {
+				stubFetch(
+					gatewayResponse([{ id: "moonshotai/kimi-k3" }]),
+					modelsDevResponse({ moonshotai: { "kimi-k3": KIMI_K3_SOURCE } }),
+					prices,
+				);
+				await expect(fetchOpenGatewayModels(() => {}, { strict: true })).rejects.toThrow(
+					"OpenGateway price table has no priced routes",
+				);
+			},
+		);
 
 		it("fails a strict regeneration so the outage is visible", async () => {
 			vi.stubGlobal("fetch", async () => ({ ok: false, status: 503 }) as Response);
