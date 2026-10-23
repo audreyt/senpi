@@ -126,8 +126,10 @@ function parseTiers(axisPrices: unknown): ModelCostTier[] {
 
 export function parseOpenGatewayPriceTable(value: unknown): OpenGatewayPriceTable {
 	if (!isRecord(value)) throw new Error("OpenGateway price table is not an object");
+	// Versioned responses wrap the route map in entries; older responses publish it at the root.
+	const entries = isRecord(value.entries) ? value.entries : value;
 	const routes: PriceRoute[] = [];
-	for (const entry of Object.values(value)) {
+	for (const entry of Object.values(entries)) {
 		if (!isRecord(entry) || typeof entry.provider !== "string") continue;
 		if (typeof entry.modelOwner !== "string" || typeof entry.modelName !== "string") continue;
 		const pricing = isRecord(entry.pricing) && isRecord(entry.pricing.current) ? entry.pricing.current : undefined;
