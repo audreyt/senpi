@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-23 - Patch production-audit transitive dependencies
+
+### What changed
+
+- `package.json`: advance the root overrides for Hono to 4.13.11 and ip-address to 10.7.4; regenerate npm, Bun and coding-agent installer locks without changing SDK pins.
+
+### Why
+
+- `package.json`: these compatible patches address GHSA-5r4p-p66f-jhc7 (double decoding in static paths) and GHSA-rxp7-6hxx-x8q5 (quadratic IPv6 zone parsing). The separate unpatched node-forge advisory remains visible to the unchanged production audit.
+
+### Why an extension could not handle it
+
+- `package.json`: transitive dependency resolution is controlled by package-manager overrides before extensions load.
+
+### Expected merge conflict zones
+
+- `package.json`: the Hono and ip-address entries in the root overrides block; preserve other dependency and SDK pins.
+
 ## 2026-10-10 - Isolate test-process temp directories (senpi#3064)
 
 ### What changed
