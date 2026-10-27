@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-27 - Patch compatible production-audit dependencies
+
+### What changed
+
+- `package.json`: pin body-parser 2.4.0, fast-uri 3.1.9 and Gondolin's Undici 6.29.1; advance qs to 6.16.1 to satisfy body-parser's declared range. Regenerate npm, Bun and installer locks.
+
+### Why
+
+- `package.json`: resolve the body-parser compressed-body denial of service, fast-uri normalization advisories (including the propagated ajv finding), and Undici denial-of-service advisories without changing parent major versions. Sandbox-runtime's Zod 3 dependency remains unpatched upstream and visible to audit.
+
+### Why an extension could not handle it
+
+- `package.json`: package-manager dependency resolution occurs before extensions load.
+
+### Expected merge conflict zones
+
+- `package.json`: root overrides for body-parser, qs, fast-uri and Gondolin/undici; preserve other dependency and SDK pins.
+
 ## 2026-10-23 - Patch production-audit transitive dependencies
 
 ### What changed

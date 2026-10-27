@@ -1,3 +1,21 @@
+## 2026-10-27 - Patch direct Undici and Zod production dependencies
+
+### What changed
+
+- `packages/coding-agent/package.json`: pin Undici 8.12.3 and Zod 4.6.7; regenerate root and installer locks.
+
+### Why
+
+- `packages/coding-agent/package.json`: address Undici EventSource/content-encoding denial of service and integrity-token validation advisories, and Zod oversized constrained-collection memory exhaustion, within the existing major versions. Do not force sandbox-runtime's Zod 3 consumer onto Zod 4.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: direct dependency pins are resolved before extension initialization.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: Undici and Zod pins only; preserve SDK pins and other package metadata.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed
