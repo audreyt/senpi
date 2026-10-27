@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Updated body-parser, fast-uri, Undici and direct Zod dependencies to patch production security advisories within their existing major versions. Sandbox-runtime's transitive Zod 3 advisory remains blocked on an upstream migration; no audit checks are suppressed.
+
 - Updated transitive Hono and ip-address dependencies to patch static-path double decoding and quadratic IPv6 zone parsing vulnerabilities (GHSA-5r4p-p66f-jhc7, GHSA-rxp7-6hxx-x8q5).
 
 - `cursor-cli-oauth` catalog entries now preserve per-model `maxTokens` overrides from the shared Cursor capability table (such as `gemini-4-argon`'s 1M output limit) instead of clamping every model to 64K.
